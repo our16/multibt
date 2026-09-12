@@ -63,6 +63,25 @@ public sealed class OutputChannel : IAsyncDisposable
     private readonly RingDiagnostics _ringDiagnostics;
     private readonly AdaptiveResampler _resampler;
     private readonly DelaySampleProvider _delay;
+
+    /// <summary>Delay asked for by the user or by the latency compensation, in ms.</summary>
+    private double _userDelayMs;
+
+    /// <summary>Extra delay implied by this device's position, in ms.</summary>
+    private double _spatialDelayMs;
+
+    /// <summary>Upper bound for the combined delay, as the delay line was built with.</summary>
+    private readonly int _maxDelayMs;
+
+    /// <summary>
+    /// What the delay line is actually set to: the user's delay PLUS the distance delay.
+    /// </summary>
+    /// <remarks>
+    /// Kept as two separate numbers and summed here, rather than letting the position overwrite the delay.
+    /// The delay line is shared by the slider, by the latency compensation and now by geometry, and the one
+    /// thing that must never happen is a position change silently discarding a delay the user set by hand.
+    /// </remarks>
+    private double TotalDelayMs => Math.Clamp(_userDelayMs + _spatialDelayMs, 0.0, _maxDelayMs);
     private readonly SignalProbe _signalProbe;
     private readonly VolumeSampleProvider _volume;
     private readonly MeteringSampleProvider _meter;
@@ -234,6 +253,7 @@ public sealed class OutputChannel : IAsyncDisposable
         _chainChannels = _resampler.WaveFormat.Channels;
 
         _delay = new DelaySampleProvider(_resampler, maxDelayMs);
+        _maxDelayMs = maxDelayMs;
 
         // Probes the signal BEFORE the per-device gain. Placed after the delay line so it sees
         // exactly what the player will receive, but before the gain so an intentionally muted
@@ -565,9 +585,34 @@ public sealed class OutputChannel : IAsyncDisposable
     /// </remarks>
     public bool ApplyDelayMs(double delayMs)
     {
-        _delay.SetDelayMs(delayMs, out bool requiresMuteResync);
+        _userDelayMs = delayMs;
+        _delay.SetDelayMs(TotalDelayMs, out bool requiresMuteResync);
         return !requiresMuteResync;
     }
+
+    /// <summary>
+    /// Sets the extra delay implied by this device's position, on top of whatever the user asked for.
+    /// </summary>
+    /// <remarks>
+    /// Applied immediately and without a fade. A position change is a deliberate configuration act, it is
+    /// small in practice (a metre is 2.9 ms), and routing it through the glide path would make the control
+    /// appear dead for tens of seconds — the exact fault that made manual delay changes look broken before.
+    /// </remarks>
+    public void SetSpatialDelayMs(double delayMs)
+    {
+        double clamped = Math.Max(0.0, delayMs);
+
+        if (Math.Abs(clamped - _spatialDelayMs) < 0.01)
+        {
+            return;
+        }
+
+        _spatialDelayMs = clamped;
+        _delay.SetDelayMs(TotalDelayMs, out _);
+    }
+
+    /// <summary>The distance delay currently added for this device's position, in ms.</summary>
+    public double SpatialDelayMs => _spatialDelayMs;
 
     /// <summary>
     /// Applies a delay the USER asked for: always lands immediately, behind a short fade.
@@ -580,6 +625,7 @@ public sealed class OutputChannel : IAsyncDisposable
     /// </remarks>
     public async Task ApplyUserDelayAsync(double delayMs, TimeSpan fade)
     {
+        _userDelayMs = delayMs;
         // Stop any in-flight start-up ramp so it cannot fight this fade over the gain.
         _rampAborted = true;
         _startupRampActive = false;
@@ -587,7 +633,7 @@ public sealed class OutputChannel : IAsyncDisposable
         float original = _volume.Volume;
 
         await FadeToAsync(0f, fade).ConfigureAwait(false);
-        _delay.SetDelayMs(delayMs, out _, immediate: true);
+        _delay.SetDelayMs(TotalDelayMs, out _, immediate: true);
         await FadeToAsync(original, fade).ConfigureAwait(false);
     }
 
@@ -601,16 +647,17 @@ public sealed class OutputChannel : IAsyncDisposable
     /// </remarks>
     public async Task ApplyDelayAsync(double delayMs, TimeSpan fade)
     {
-        if (!_delay.WouldRequireMuteResync(delayMs))
+        _userDelayMs = delayMs;
+        if (!_delay.WouldRequireMuteResync(TotalDelayMs))
         {
-            _delay.SetDelayMs(delayMs, out _);
+            _delay.SetDelayMs(TotalDelayMs, out _);
             return;
         }
 
         float original = _volume.Volume;
 
         await FadeToAsync(0f, fade).ConfigureAwait(false);
-        _delay.SetDelayMs(delayMs, out _);
+        _delay.SetDelayMs(TotalDelayMs, out _);
         await FadeToAsync(original, fade).ConfigureAwait(false);
     }
 
