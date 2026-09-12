@@ -104,15 +104,19 @@ public static class VirtualCableDetector
     }
 
     /// <summary>
-    /// Orders endpoints for a capture-sink picker: usable virtual cables first, then everything else.
+    /// Orders endpoints for the input picker: usable ones first, then by name.
     /// </summary>
+    /// <remarks>
+    /// A virtual cable gets NO special position. It is one legitimate input among others — capturing a real
+    /// device is a perfectly reasonable choice — and ranking it first would tell the user it is the correct
+    /// answer, which is exactly the coupling this list is supposed to avoid.
+    /// </remarks>
     public static IReadOnlyList<AudioEndpointInfo> OrderForSinkPicker(IEnumerable<AudioEndpointInfo> endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
         return endpoints
-            .OrderByDescending(IsUsableCaptureSink)
-            .ThenByDescending(e => e.IsActive)
+            .OrderByDescending(e => e.IsActive)
             .ThenBy(e => e.FriendlyName, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
     }
@@ -125,73 +129,6 @@ public static class VirtualCableDetector
         return endpoints.FirstOrDefault(IsUsableCaptureSink);
     }
 
-    /// <summary>
-    /// Decides which endpoint should be the capture source, without asking the user.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The user is not expected to know what a virtual cable is, so the sink is resolved rather than
-    /// configured: a virtual cable that is present is simply used. That is the whole point of the cable in
-    /// this design — it is an implementation detail of "one audio stream to many speakers", not a setting.
-    /// </para>
-    /// <para>
-    /// An explicitly configured sink still wins, because the user may deliberately point the mirror at a
-    /// particular cable when several are installed. If that endpoint has disappeared — uninstalled, renamed
-    /// by a reinstall, or currently disabled — the choice falls back to auto-detection instead of failing,
-    /// so a cable upgrade does not leave the app stuck on a missing device.
-    /// </para>
-    /// <para>
-    /// Returns null when no cable is available, which is NOT an error: the mirror then captures a real
-    /// endpoint, and the caller reports that some devices cannot be controlled.
-    /// </para>
-    /// </remarks>
-    /// <param name="renderEndpoints">
-    /// Render endpoints to choose from. Must be the RENDER side: a cable's own capture side is never a sink,
-    /// because Windows cannot render audio into it.
-    /// </param>
-    /// <param name="configuredSinkId">The user's explicit choice, or null to auto-detect.</param>
-    /// <param name="currentDefaultSinkId">
-    /// The endpoint Windows currently renders into, or null when unknown. Breaks the tie when several
-    /// cables are installed — see the selection order below.
-    /// </param>
-    public static AudioEndpointInfo? ResolveSourceSink(
-        IEnumerable<AudioEndpointInfo> renderEndpoints,
-        string? configuredSinkId,
-        string? currentDefaultSinkId = null)
-    {
-        ArgumentNullException.ThrowIfNull(renderEndpoints);
-
-        List<AudioEndpointInfo> endpoints = [.. renderEndpoints];
-
-        if (!string.IsNullOrWhiteSpace(configuredSinkId))
-        {
-            AudioEndpointInfo? configured = endpoints.FirstOrDefault(
-                e => string.Equals(e.EndpointId, configuredSinkId, StringComparison.OrdinalIgnoreCase));
-
-            // Only honour it if it is still a usable cable: a configured id that has since become a real
-            // speaker (device roles change) would otherwise divert audio into a speaker twice.
-            if (configured is not null && IsUsableCaptureSink(configured))
-            {
-                return configured;
-            }
-        }
-
-        // Which cable, when more than one is installed?
-        //
-        // The one Windows is ALREADY rendering into: that is the cable the sound is actually going into
-        // right now. Choosing any other captures a cable that nothing feeds, and the symptom is silence
-        // while every device reports itself as running.
-        //
-        // With no such hint, order by name so the choice is at least stable and matches what the user sees
-        // ("Line 1" before "Line 2"). An arbitrary pick that changes between runs cannot be reasoned about,
-        // and with several cables installed it decides whether the app works at all.
-        return endpoints
-            .Where(IsUsableCaptureSink)
-            .OrderByDescending(e => !string.IsNullOrEmpty(currentDefaultSinkId)
-                && string.Equals(e.EndpointId, currentDefaultSinkId, StringComparison.OrdinalIgnoreCase))
-            .ThenBy(e => e.FriendlyName, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
-    }
 
     private static bool Matches(string? text, string[] markers)
     {

@@ -93,9 +93,9 @@
           rather than as a missing prerequisite.
         -->
         <Border Grid.Row="1" Margin="0,74,0,0" Padding="10" CornerRadius="4"
-                Background="#FDECEA" BorderBrush="#D9534F" BorderThickness="1"
-                Visibility="{Binding HasVirtualCableWarning, Converter={StaticResource BoolToVisibility}}">
-            <TextBlock Text="{Binding VirtualCableWarning}" TextWrapping="Wrap" Foreground="#8A1F1A" />
+                Background="#FFF8E1" BorderBrush="#D9B44A" BorderThickness="1"
+                Visibility="{Binding HasInputNote, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock Text="{Binding InputNote}" TextWrapping="Wrap" Foreground="#5A4A1F" />
         </Border>
 
         <!-- Device list -->
@@ -127,9 +127,7 @@
                     <ComboBox x:Name="SinkBox" Width="210" VerticalAlignment="Center"
                               SelectionChanged="OnCaptureSinkChanged"
                               ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Tip]}" />
-                    <TextBlock Margin="8,0,0,0" VerticalAlignment="Center" Opacity="0.75"
-                               Text="{Binding AudioInputSummary}"
-                               ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Input.Tip]}" />
+
                     <Button Padding="8,3" Margin="6,0,0,0" Click="OnGetVirtualCable"
                             Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable]}"
                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable.Tip]}" />

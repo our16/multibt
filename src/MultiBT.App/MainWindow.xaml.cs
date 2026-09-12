@@ -157,11 +157,9 @@ public partial class MainWindow : Window
 
         foreach (AudioEndpointInfo endpoint in _viewModel.CaptureSinkCandidates)
         {
-            string name = VirtualCableDetector.IsUsableCaptureSink(endpoint)
-                ? $"★ {endpoint.FriendlyName}"
-                : endpoint.FriendlyName;
-
-            _ = SinkBox.Items.Add(new ComboBoxItem { Content = name, Tag = endpoint.EndpointId });
+            // No marker for a virtual cable: it is one option among others, and flagging it would imply
+            // it is the intended answer.
+            _ = SinkBox.Items.Add(new ComboBoxItem { Content = endpoint.FriendlyName, Tag = endpoint.EndpointId });
         }
 
         string? current = _viewModel.CaptureSinkEndpointId;
