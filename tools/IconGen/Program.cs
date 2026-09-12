@@ -12,7 +12,7 @@
 //   src/MultiBT.App/Assets/multibt.ico            # multi-size, DIB entries + PNG for 256
 //   assets/icon/preview-<size>.png                # for visual review
 //
-// Design: a rounded "app tile" with an indigo -> cyan diagonal gradient, carrying a white speaker
+// Design: a rounded "app tile" in the UI accent colour, carrying a white glyph of one signal
 // glyph with radiating arcs. Minimal, high contrast on both light and dark taskbars, and legible at
 // 16 px.
 
@@ -29,8 +29,12 @@ internal static class Program
     private static readonly int[] Sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256];
 
     /// <summary>Brand gradient: indigo to cyan, top-left to bottom-right.</summary>
-    private static readonly Color GradientStart = Color.FromRgb(0x6D, 0x5B, 0xFF);
-    private static readonly Color GradientEnd = Color.FromRgb(0x22, 0xD3, 0xEE);
+    /// <summary>The application's accent colour, so the icon and the window agree.</summary>
+    /// <remarks>
+    /// Flat rather than a gradient on purpose: at 16 px a colour gradient across a 16-pixel tile is noise,
+    /// not depth. Depth comes from the single top highlight below, which is only drawn where it can be seen.
+    /// </remarks>
+    private static readonly Color Accent = Color.FromRgb(0x25, 0x63, 0xEB);
 
     [STAThread]
     private static int Main(string[] args)
@@ -182,9 +186,10 @@ internal static class Program
             cornerRadius,
             cornerRadius);
 
-        var gradient = new LinearGradientBrush(GradientStart, GradientEnd, new Point(0, 0), new Point(1, 1));
+        var tileBrush = new SolidColorBrush(Accent);
+        tileBrush.Freeze();
 
-        dc.DrawGeometry(gradient, null, tile);
+        dc.DrawGeometry(tileBrush, null, tile);
 
         // A subtle top highlight gives the tile depth without gradient noise at 16 px.
         if (size >= 48)
@@ -202,11 +207,14 @@ internal static class Program
         }
 
         // ---- glyph ----------------------------------------------------------------------
-        // Small sizes get a deliberately simpler mark: at 16 px two arcs plus a stroke become an
-        // unreadable smudge, and a clean speaker silhouette reads far better than a busy blob.
+        // One signal forking into three: a stem entering from the left, splitting into three bars.
+        //
+        // Small sizes get a reduced form -- three bars, no stem or fork -- for the same reason the old mark
+        // had a compact variant: the fork is the detail that disappears first when the glyph is only 16
+        // pixels wide, and half a fork reads as a smudge rather than as a shape.
         bool compact = size < 28;
 
-        double glyphScale = size * (compact ? 0.72 : 0.58) / 100.0;
+        double glyphScale = size * (compact ? 0.76 : 0.62) / 100.0;
         double glyphX = (size - (100 * glyphScale)) / 2.0;
         double glyphY = (size - (100 * glyphScale)) / 2.0;
 
@@ -215,87 +223,77 @@ internal static class Program
         var white = new SolidColorBrush(Colors.White);
         white.Freeze();
 
-        // Speaker: a driver box plus a flared cone, as one filled path.
-        var speaker = new StreamGeometry();
-
-        using (StreamGeometryContext ctx = speaker.Open())
-        {
-            ctx.BeginFigure(Map(4, 36), isFilled: true, isClosed: true);
-            ctx.LineTo(Map(26, 36), isStroked: true, isSmoothJoin: false);
-            ctx.LineTo(Map(52, 10), isStroked: true, isSmoothJoin: true);
-            ctx.LineTo(Map(52, 90), isStroked: true, isSmoothJoin: false);
-            ctx.LineTo(Map(26, 64), isStroked: true, isSmoothJoin: true);
-            ctx.LineTo(Map(4, 64), isStroked: true, isSmoothJoin: false);
-        }
-
-        speaker.Freeze();
-
-        dc.DrawGeometry(white, null, speaker);
-
-        if (compact)
-        {
-            return;
-        }
-
-        // Radiating arcs, centred BEYOND the cone mouth and bowling to the right.
+        // Stroke width in DEVICE pixels, not glyph units.
         //
-        // Two geometry traps, both of which produced a solid blob in earlier revisions:
-        //   1. angles must be measured from +X, or the arc is drawn upwards and lands on the speaker;
-        //   2. the arc centre has to sit past the cone mouth (x = 52) and the radii must exceed the
-        //      stroke width, or the arc's inner edge reaches back into the cone and the two merge.
-        double strokeGlyphUnits = Math.Max(1.2, size * 0.042) / glyphScale;
+        // Dividing a device-pixel target by glyphScale and handing the result to Pen is a unit error: Pen
+        // takes device pixels, so the stroke came out about eight times too thick at 32 px and the three bars
+        // merged into one blob. The ASCII preview showed it immediately.
+        // The floor is deliberately generous: at 16 px a hairline stroke antialiases away to nothing, and a
+        // bar that vanishes leaves the compact mark reading as two outputs instead of three.
+        double stroke = Math.Max(size < 28 ? 1.9 : 1.45, size * 0.075);
 
-        var arcPen = new Pen(white, strokeGlyphUnits)
+        var pen = new Pen(white, stroke)
         {
             StartLineCap = PenLineCap.Round,
             EndLineCap = PenLineCap.Round,
+            LineJoin = PenLineJoin.Round,
         };
 
-        arcPen.Freeze();
+        pen.Freeze();
 
-        foreach (double radius in new[] { 11.0, 25.0 })
+        if (compact)
         {
-            dc.DrawGeometry(null, arcPen, BuildArc(Map, 60, 50, radius, 50));
+            // Three bars: still "many outputs", with nothing that can merge at this size.
+            foreach (double y in new[] { 24.0, 50.0, 76.0 })
+            {
+                dc.DrawGeometry(null, pen, Line(Map(17, y), Map(83, y)));
+            }
+
+            return;
         }
+
+        // Stem, then the fork. Drawn as three separate stroked paths from one point so the join stays clean
+        // and the three branches cannot accidentally cross each other.
+        dc.DrawGeometry(null, pen, Line(Map(8, 50), Map(37, 50)));
+
+        dc.DrawGeometry(null, pen, Polyline(Map, (37, 50), (58, 24), (92, 24)));
+        dc.DrawGeometry(null, pen, Line(Map(37, 50), Map(92, 50)));
+        dc.DrawGeometry(null, pen, Polyline(Map, (37, 50), (58, 76), (92, 76)));
     }
 
-    /// <summary>Builds an arc centred on (cx, cy) spanning ±halfAngle degrees, opening to the right.</summary>
-    private static PathGeometry BuildArc(
-        Func<double, double, Point> map,
-        double cx,
-        double cy,
-        double radius,
-        double halfAngleDegrees)
+    /// <summary>A straight segment between two mapped points.</summary>
+    private static Geometry Line(Point from, Point to)
     {
-        // Angles are measured from +X (right), so the span is centred on the RIGHT direction.
-        // An earlier revision subtracted 90 degrees here, which centred the arc on UP and produced a
-        // blob sitting on top of the speaker instead of waves beside it.
-        double startRadians = -halfAngleDegrees * Math.PI / 180.0;
-        double endRadians = halfAngleDegrees * Math.PI / 180.0;
+        var geometry = new StreamGeometry();
 
-        Point start = map(cx + (radius * Math.Cos(startRadians)), cy + (radius * Math.Sin(startRadians)));
-        Point end = map(cx + (radius * Math.Cos(endRadians)), cy + (radius * Math.Sin(endRadians)));
+        using (StreamGeometryContext ctx = geometry.Open())
+        {
+            ctx.BeginFigure(from, isFilled: false, isClosed: false);
+            ctx.LineTo(to, isStroked: true, isSmoothJoin: false);
+        }
 
-        var figure = new PathFigure { StartPoint = start, IsClosed = false, IsFilled = false };
-
-        double radiusPixels = radius * Math.Abs(map(1, 0).X - map(0, 0).X);
-
-        figure.Segments.Add(new ArcSegment(
-            end,
-            new Size(radiusPixels, radiusPixels),
-            0,
-            isLargeArc: false,
-            // Y grows downward in WPF, so an increasing angle reads as clockwise on screen.
-            SweepDirection.Clockwise,
-            isStroked: true));
-
-        var geometry = new PathGeometry();
-        geometry.Figures.Add(figure);
         geometry.Freeze();
-
         return geometry;
     }
 
+    /// <summary>A polyline through the given glyph-space points.</summary>
+    private static Geometry Polyline(Func<double, double, Point> map, params (double X, double Y)[] points)
+    {
+        var geometry = new StreamGeometry();
+
+        using (StreamGeometryContext ctx = geometry.Open())
+        {
+            ctx.BeginFigure(map(points[0].X, points[0].Y), isFilled: false, isClosed: false);
+
+            for (int i = 1; i < points.Length; i++)
+            {
+                ctx.LineTo(map(points[i].X, points[i].Y), isStroked: true, isSmoothJoin: true);
+            }
+        }
+
+        geometry.Freeze();
+        return geometry;
+    }
     /// <summary>Renders the icon to premultiplied BGRA pixels, top-down.</summary>
     private static byte[] RenderBgra(int size)
     {
