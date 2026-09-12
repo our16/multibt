@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using MultiBT.App.Localization;
 using MultiBT.App.Services;
 using MultiBT.App.Tray;
 using MultiBT.App.ViewModels;
@@ -58,6 +59,14 @@ public partial class App : Application
         // Keep the tray in step with the view model: device list, profile, pause state.
         _viewModel.PropertyChanged += (_, _) => RefreshTray();
         _viewModel.Devices.CollectionChanged += (_, _) => RefreshTray();
+
+        // The tray carries its own labels and is not made of bindings, so a language change has to be
+        // pushed into it. The view model re-localises the text it composes on the same event.
+        Localizer.Instance.LanguageChanged += (_, _) =>
+        {
+            _tray?.ApplyLanguage();
+            RefreshTray();
+        };
 
         RefreshTray();
         ShowMainWindow();
@@ -121,8 +130,8 @@ public partial class App : Application
         catch (Exception ex)
         {
             MessageBox.Show(
-                $"Could not switch profile:\n\n{ex.Message}",
-                "MultiBT",
+                $"{Localizer.Instance["Dialog.ProfileSwitchFailed"]}\n\n{ex.Message}",
+                Localizer.Instance["App.Title"],
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
         }
@@ -139,8 +148,8 @@ public partial class App : Application
         catch (Exception ex)
         {
             MessageBox.Show(
-                $"Could not change {device.DisplayName}:\n\n{ex.Message}",
-                "MultiBT",
+                $"{Localizer.Instance.Format("Dialog.DeviceToggleFailed", device.DisplayName)}\n\n{ex.Message}",
+                Localizer.Instance["App.Title"],
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
         }
@@ -206,8 +215,8 @@ public partial class App : Application
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         MessageBox.Show(
-            $"Unexpected error:\n\n{e.Exception}",
-            "MultiBT",
+            $"{Localizer.Instance["Dialog.UnexpectedError"]}\n\n{e.Exception}",
+            Localizer.Instance["Dialog.Error"],
             MessageBoxButton.OK,
             MessageBoxImage.Error);
 
@@ -217,8 +226,8 @@ public partial class App : Application
 
     private static void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs e) =>
         MessageBox.Show(
-            $"A fatal error occurred:\n\n{e.ExceptionObject}",
-            "MultiBT",
+            $"{Localizer.Instance["Dialog.FatalError"]}\n\n{e.ExceptionObject}",
+            Localizer.Instance["Dialog.Error"],
             MessageBoxButton.OK,
             MessageBoxImage.Error);
 

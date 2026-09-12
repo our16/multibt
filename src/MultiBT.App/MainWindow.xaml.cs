@@ -263,7 +263,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "MultiBT", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(ex.Message, _localizer["App.Title"], MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using H.NotifyIcon;
+using MultiBT.App.Localization;
 
 namespace MultiBT.App.Tray;
 
@@ -28,8 +29,11 @@ public sealed class TrayHost : IDisposable
     private readonly MenuItem _profilesMenu;
     private readonly MenuItem _devicesMenu;
     private readonly MenuItem _pauseMenu;
+    private readonly MenuItem _openMenu;
+    private readonly MenuItem _exitMenu;
     private bool _disposed;
     private bool _isPaused;
+    private int _lastActiveDeviceCount;
 
     /// <summary>Raised when the user wants to open the main window.</summary>
     public event EventHandler? OpenMainWindowRequested;
@@ -49,12 +53,17 @@ public sealed class TrayHost : IDisposable
     /// <summary>Initializes the tray icon and its menu.</summary>
     public TrayHost()
     {
-        _profilesMenu = new MenuItem { Header = "_Profiles" };
-        _devicesMenu = new MenuItem { Header = "_Devices" };
+        Localizer loc = Localizer.Instance;
+
+        // Labels come from the localisation table rather than being written here. The tray is the primary
+        // UI, so a menu that stays English while the window is Chinese is the most visible miss there is.
+        // ApplyLanguage re-reads them when the user switches.
+        _profilesMenu = new MenuItem { Header = loc["Tray.Profiles"] };
+        _devicesMenu = new MenuItem { Header = loc["Tray.Devices"] };
 
         _pauseMenu = new MenuItem
         {
-            Header = "_Pause multi-device output",
+            Header = loc["Tray.Pause"],
             Command = new DelegateCommand(OnPauseClick),
         };
 
@@ -64,21 +73,25 @@ public sealed class TrayHost : IDisposable
         menu.Items.Add(_devicesMenu);
         menu.Items.Add(new Separator());
         menu.Items.Add(_pauseMenu);
-        menu.Items.Add(new MenuItem
+
+        _openMenu = new MenuItem
         {
-            Header = "_Open MultiBT",
+            Header = loc["Tray.Open"],
             Command = new DelegateCommand(() => OpenMainWindowRequested?.Invoke(this, EventArgs.Empty)),
-        });
+        };
+        menu.Items.Add(_openMenu);
         menu.Items.Add(new Separator());
-        menu.Items.Add(new MenuItem
+
+        _exitMenu = new MenuItem
         {
-            Header = "E_xit",
+            Header = loc["Tray.Exit"],
             Command = new DelegateCommand(() => ExitRequested?.Invoke(this, EventArgs.Empty)),
-        });
+        };
+        menu.Items.Add(_exitMenu);
 
         _trayIcon = new TaskbarIcon
         {
-            ToolTipText = "MultiBT — multi-device audio",
+            ToolTipText = loc["Tray.Tooltip"],
 
             // LEFT click opens the window directly; RIGHT click shows the menu.
             //
@@ -132,6 +145,27 @@ public sealed class TrayHost : IDisposable
     }
 
     /// <summary>
+    /// Re-reads every label from the localisation table.
+    /// </summary>
+    /// <remarks>
+    /// The menu is made of real <see cref="MenuItem"/> instances rather than bindings, so the localiser's
+    /// "every indexer result changed" notification cannot reach it and the strings have to be pushed again.
+    /// Called when the user switches language, which is otherwise a switch the tray would ignore.
+    /// </remarks>
+    public void ApplyLanguage()
+    {
+        Localizer loc = Localizer.Instance;
+
+        _profilesMenu.Header = loc["Tray.Profiles"];
+        _devicesMenu.Header = loc["Tray.Devices"];
+        _openMenu.Header = loc["Tray.Open"];
+        _exitMenu.Header = loc["Tray.Exit"];
+
+        // The pause label and the tooltip are both functions of state, so they are rebuilt rather than set.
+        UpdateState(_isPaused, _lastActiveDeviceCount);
+    }
+
+    /// <summary>
     /// Rebuilds the profile submenu.
     /// </summary>
     /// <param name="profiles">Profile id, display name and icon.</param>
@@ -159,7 +193,7 @@ public sealed class TrayHost : IDisposable
 
         if (_profilesMenu.Items.Count == 0)
         {
-            _profilesMenu.Items.Add(new MenuItem { Header = "(no profiles)", IsEnabled = false });
+            _profilesMenu.Items.Add(new MenuItem { Header = Localizer.Instance["Tray.NoProfiles"], IsEnabled = false });
         }
     }
 
@@ -188,7 +222,7 @@ public sealed class TrayHost : IDisposable
 
         if (_devicesMenu.Items.Count == 0)
         {
-            _devicesMenu.Items.Add(new MenuItem { Header = "(no devices)", IsEnabled = false });
+            _devicesMenu.Items.Add(new MenuItem { Header = Localizer.Instance["Tray.NoDevices"], IsEnabled = false });
         }
     }
 
@@ -199,11 +233,20 @@ public sealed class TrayHost : IDisposable
     /// <param name="activeDeviceCount">Number of devices currently mirrored to.</param>
     public void UpdateState(bool isPaused, int activeDeviceCount)
     {
-        _isPaused = isPaused;
-        _pauseMenu.Header = isPaused ? "_Resume multi-device output" : "_Pause multi-device output";
+        Localizer loc = Localizer.Instance;
 
-        string state = isPaused ? "paused" : activeDeviceCount > 0 ? "active" : "no devices";
-        _trayIcon.ToolTipText = $"MultiBT — {state} ({activeDeviceCount} device(s))";
+        _isPaused = isPaused;
+
+        // Remembered so that a language change can rebuild the tooltip, which is a function of state.
+        _lastActiveDeviceCount = activeDeviceCount;
+
+        _pauseMenu.Header = loc[isPaused ? "Tray.Resume" : "Tray.Pause"];
+
+        string state = loc[isPaused
+            ? "Tray.StatePaused"
+            : activeDeviceCount > 0 ? "Tray.StateActive" : "Tray.StateNoDevices"];
+
+        _trayIcon.ToolTipText = loc.Format("Tray.TooltipState", state, activeDeviceCount);
     }
 
     /// <inheritdoc />

@@ -1586,9 +1586,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 bool glided = channel.ApplyDelayMs(device.EffectiveDelayMs);
 
                 engine.AddChannel(channel);
-                device.Status = glided
-                    ? $"running · delay {channel.AppliedDelayMs:0} ms"
-                    : $"running · delay {channel.AppliedDelayMs:0} ms (resynced)";
+                device.Status = RunningStatus(channel.AppliedDelayMs, correctionPpm: null, resynced: !glided);
             }
             catch (Exception ex)
             {
@@ -1724,7 +1722,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         foreach ((string endpointId, double volume) in _pendingVolumeWrites)
         {
-            EndpointVolumeReader.TryWrite(_devices, endpointId, volumeScalar: volume);
+            bool written = EndpointVolumeReader.TryWrite(_devices, endpointId, volumeScalar: volume);
 
             // Remembered as a device preference. Written here rather than on every slider tick, so a
             // drag produces one settings write per burst instead of one per pixel.
@@ -1733,6 +1731,18 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             {
                 owner.Profile.Audio.DesiredVolume = volume;
                 QueueSettingsSave();
+            }
+
+            // A write that did not land is reported rather than swallowed.
+            //
+            // The slider shows what the user asked for, never what the endpoint achieved, so without this a
+            // device that refuses the write looks like a slider that does nothing -- with no reason given,
+            // which is exactly the confusion the per-device volume display exists to remove.
+            if (!written)
+            {
+                StatusText = Localizer.Instance.Format(
+                    "Status.VolumeFailed",
+                    owner?.DisplayName ?? endpointId);
             }
 
             // Refresh ONLY the mute flag.
@@ -1911,9 +1921,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _engine.AddChannel(channel);
         channel.Start();
 
-        device.Status = glided
-            ? $"running · delay {channel.AppliedDelayMs:0} ms"
-            : $"running · delay {channel.AppliedDelayMs:0} ms (resynced)";
+        device.Status = RunningStatus(channel.AppliedDelayMs, correctionPpm: null, resynced: !glided);
 
         StatusText = Localizer.Instance.Format("Status.Added", device.DisplayName, _engine.Channels.Count);
     }
@@ -2024,6 +2032,36 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The "running" line for a device, composed from the localisation table.
+    /// </summary>
+    /// <remarks>
+    /// Parts joined with " · " rather than one template per case: the delay, the drift correction and the
+    /// resync marker are independent facts, and a template per combination would drift apart as they change.
+    /// The ppm figure keeps its own unit, which is a unit and not a word to translate.
+    /// </remarks>
+    private static string RunningStatus(double delayMs, double? correctionPpm, bool resynced)
+    {
+        Localizer loc = Localizer.Instance;
+        var parts = new List<string> { loc["Status.Running"] };
+
+        if (correctionPpm is double ppm)
+        {
+            parts.Add(ppm.ToString("+0;-0;0", System.Globalization.CultureInfo.InvariantCulture) + " ppm");
+        }
+
+        parts.Add(loc.Format(
+            "Status.Delay",
+            delayMs.ToString("0", System.Globalization.CultureInfo.InvariantCulture)));
+
+        if (resynced)
+        {
+            parts.Add(loc["Status.Resynced"]);
+        }
+
+        return string.Join(" · ", parts);
+    }
+
     private void RefreshDiagnostics()
     {
         // Watch for devices appearing and disappearing. Every 4th tick, so the endpoint enumeration does not
@@ -2056,7 +2094,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             DeviceViewModel? device = Devices.FirstOrDefault(d => d.Key == diagnostics.DeviceKey);
             if (device is not null)
             {
-                device.Status = $"running · {diagnostics.CorrectionPpm:+0;-0;0} ppm · delay {diagnostics.AppliedDelayMs:0} ms";
+                device.Status = RunningStatus(diagnostics.AppliedDelayMs, diagnostics.CorrectionPpm, resynced: false);
             }
         }
     }
