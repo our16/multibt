@@ -321,9 +321,22 @@ public partial class MainWindow : Window
         _viewModel.Mode = mode;
     }
 
-    private void OnStart(object sender, RoutedEventArgs e) => _viewModel.Start();
+    /// <summary>
+    /// The single start/stop button: one control, and the state decides which way it goes.
+    /// </summary>
+    private async void OnStartStop(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsRunning)
+        {
+            await _viewModel.StopAsync();
+        }
+        else
+        {
+            _viewModel.Start();
+        }
+    }
 
-    private async void OnStop(object sender, RoutedEventArgs e) => await _viewModel.StopAsync();
+
 
     private void OnSave(object sender, RoutedEventArgs e) => _viewModel.SaveCurrentStateToActiveProfile();
 

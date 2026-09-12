@@ -180,6 +180,43 @@
             </Setter>
         </Style>
 
+        <!--
+          Start/stop in one button. Blue while stopped, red while running, so the colour states the
+          consequence of pressing it rather than naming a mode.
+        -->
+        <Style x:Key="StartStopButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Background" Value="#2563EB" />
+            <Setter Property="BorderBrush" Value="#2563EB" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="22,7" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="7"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <!-- Opacity, not a colour: the button is blue in one state and red in the other,
+                                 and a fixed hover colour would repaint the red one blue-grey. -->
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.86" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="Card" TargetType="Border">
             <Setter Property="Background" Value="White" />
             <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
@@ -478,7 +515,6 @@
         <Grid Grid.Row="4" Height="40" Margin="0,12,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -486,28 +522,39 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <Button Grid.Column="0" Style="{StaticResource PrimaryButton}" MinWidth="132"
-                    Click="OnStart" IsEnabled="{Binding IsNotRunning}"
-                    Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Start]}"
-                    ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.NotVerified]}" />
-            <Button Grid.Column="1" Style="{StaticResource BaseButton}" MinWidth="96" Margin="8,0,0,0"
-                    Click="OnStop" IsEnabled="{Binding IsRunning}"
-                    Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Stop]}" />
+            <Button Grid.Column="0" MinWidth="132" Margin="0,0,8,0"
+                    Click="OnStartStop"
+                    ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.NotVerified]}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource StartStopButton}">
+                        <Setter Property="Content"
+                                Value="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Start]}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                <Setter Property="Content"
+                                        Value="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Stop]}" />
+                                <Setter Property="Background" Value="#DC2626" />
+                                <Setter Property="BorderBrush" Value="#DC2626" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
 
             <!--
               Master volume: multiplies every ticked device at once. It is a gain on top of their own
               volumes, so it changes loudness without disturbing the balance between devices, and 100 %
               always means "exactly what each device is set to".
             -->
-            <TextBlock Grid.Column="3" Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
+            <TextBlock Grid.Column="2" Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
                        Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Master.Label]}" />
-            <Slider Grid.Column="4" Width="150" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
+            <Slider Grid.Column="3" Width="150" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
                     Value="{Binding MasterVolume, Mode=TwoWay}" VerticalAlignment="Center"
                     ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Master.Tip]}" />
-            <TextBlock Grid.Column="5" Style="{StaticResource ValueText}" Width="44" Margin="6,0,12,0"
+            <TextBlock Grid.Column="4" Style="{StaticResource ValueText}" Width="44" Margin="6,0,12,0"
                        Text="{Binding MasterVolumePercent}" />
 
-            <Button Grid.Column="6" Style="{StaticResource BaseButton}" MinWidth="96"
+            <Button Grid.Column="5" Style="{StaticResource BaseButton}" MinWidth="96"
                     Click="OnSave"
                     Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Save]}" />
         </Grid>
