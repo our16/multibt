@@ -312,6 +312,16 @@ public sealed class OutputChannel : IAsyncDisposable
     /// </remarks>
     public void SetSpatialGains(double left, double right) => _spatial?.SetGains(left, right);
 
+    /// <summary>Peak of the left channel, or null when this device is not stereo.</summary>
+    /// <remarks>
+    /// Exposed so a test can tell a correctly panned device from one panned the wrong way round. The
+    /// aggregate level cannot: both directions produce the same total.
+    /// </remarks>
+    public double? LeftPeak => _signalProbe.LeftPeak;
+
+    /// <summary>Peak of the right channel, or null when this device is not stereo.</summary>
+    public double? RightPeak => _signalProbe.RightPeak;
+
     /// <summary>Non-null when the player could not be built exactly as requested (e.g. raw mode unavailable).</summary>
     public string? InitializationNote { get; }
 

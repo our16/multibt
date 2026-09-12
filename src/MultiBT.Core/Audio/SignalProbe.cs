@@ -45,6 +45,8 @@ public sealed class SignalProbe : ISampleProvider
     private long _blocks;
     private long _silentBlocks;
     private long _peakMicro;
+    private long _leftPeakMicro;
+    private long _rightPeakMicro;
     private long _sumSquaresMicro;
     private long _samples;
 
@@ -96,7 +98,26 @@ public sealed class SignalProbe : ISampleProvider
     public bool HasSignal => Interlocked.Read(ref _blocks) > Interlocked.Read(ref _silentBlocks);
 
     /// <summary>Clears the running peak so the caller can read "peak since last check".</summary>
-    public void ResetPeak() => Interlocked.Exchange(ref _peakMicro, 0);
+    public void ResetPeak()
+    {
+        Interlocked.Exchange(ref _peakMicro, 0);
+        Interlocked.Exchange(ref _leftPeakMicro, 0);
+        Interlocked.Exchange(ref _rightPeakMicro, 0);
+    }
+
+    /// <summary>Peak of the LEFT channel, or null when the stream is not stereo.</summary>
+    /// <remarks>
+    /// Null rather than the aggregate peak: a caller comparing left against right must not be handed two
+    /// identical numbers on a mono stream and conclude the panning works.
+    /// </remarks>
+    public double? LeftPeak => WaveFormat.Channels == 2
+        ? Interlocked.Read(ref _leftPeakMicro) / 1e6
+        : null;
+
+    /// <summary>Peak of the RIGHT channel, or null when the stream is not stereo.</summary>
+    public double? RightPeak => WaveFormat.Channels == 2
+        ? Interlocked.Read(ref _rightPeakMicro) / 1e6
+        : null;
 
     /// <inheritdoc />
     public int Read(Span<float> buffer)
@@ -111,6 +132,14 @@ public sealed class SignalProbe : ISampleProvider
         float peak = 0f;
         double sumSquares = 0.0;
 
+        // Per-channel peaks, for stereo only. This is what makes device POSITIONING verifiable: the aggregate
+        // peak above cannot tell a correctly panned speaker from one panned the wrong way round, because both
+        // produce the same total level. Null on a non-stereo stream, so a caller cannot mistake "not measured"
+        // for "silent".
+        bool stereo = WaveFormat.Channels == 2;
+        float leftPeak = 0f;
+        float rightPeak = 0f;
+
         for (int i = 0; i < read; i++)
         {
             float sample = buffer[i];
@@ -121,7 +150,28 @@ public sealed class SignalProbe : ISampleProvider
                 peak = magnitude;
             }
 
+            if (stereo)
+            {
+                if ((i & 1) == 0)
+                {
+                    if (magnitude > leftPeak)
+                    {
+                        leftPeak = magnitude;
+                    }
+                }
+                else if (magnitude > rightPeak)
+                {
+                    rightPeak = magnitude;
+                }
+            }
+
             sumSquares += (double)sample * sample;
+        }
+
+        if (stereo)
+        {
+            RaisePeak(ref _leftPeakMicro, leftPeak);
+            RaisePeak(ref _rightPeakMicro, rightPeak);
         }
 
         Interlocked.Increment(ref _blocks);
@@ -132,18 +182,26 @@ public sealed class SignalProbe : ISampleProvider
         }
 
         long scaledPeak = (long)(peak * 1e6);
-        long current;
-        while ((current = Interlocked.Read(ref _peakMicro)) < scaledPeak)
-        {
-            if (Interlocked.CompareExchange(ref _peakMicro, scaledPeak, current) == current)
-            {
-                break;
-            }
-        }
+        RaisePeak(ref _peakMicro, peak);
 
         Interlocked.Add(ref _sumSquaresMicro, (long)(sumSquares * 1e6));
         Interlocked.Add(ref _samples, read);
 
         return read;
+    }
+
+    /// <summary>Raises a stored peak only if the new one is higher. Lock-free: the audio thread must not wait.</summary>
+    private static void RaisePeak(ref long field, float peak)
+    {
+        long scaled = (long)(peak * 1e6);
+        long current;
+
+        while ((current = Interlocked.Read(ref field)) < scaled)
+        {
+            if (Interlocked.CompareExchange(ref field, scaled, current) == current)
+            {
+                break;
+            }
+        }
     }
 }
