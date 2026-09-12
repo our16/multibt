@@ -785,7 +785,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         // Read each device's own Windows endpoint volume so the UI can explain WHY two devices at the
-        // same gain sound different, and so AutoMatchLevels has the data it needs.
+        // same gain sound different. That difference is the measurable half of a loudness mismatch; the
+        // other half is speaker sensitivity, which no API exposes, so it stays a manual trim.
         RefreshEndpointVolumes();
 
         RecomputeCompensations();
@@ -1801,49 +1802,6 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     TimeSpan.FromMilliseconds(EngineTunables.FadeMs));
             }
         }
-    }
-
-    /// <summary>
-    /// Sets every enabled device's output volume so their LOUDNESS matches.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Mirrored loudness is approximately <c>endpointVolume x speakerSensitivity</c>. Only the first
-    /// factor is measurable, so this equalises it: every enabled device is set to the LOWEST volume
-    /// among them, and the user then raises any device that still sounds quiet (or trims by ear,
-    /// because speaker sensitivity is not exposed by any API).
-    /// </para>
-    /// <para>
-    /// It only ever lowers. Raising every device to the loudest one's volume would make the whole set
-    /// as loud as the loudest speaker, which is the opposite of matching them.
-    /// </para>
-    /// </remarks>
-    public void AutoMatchLevels()
-    {
-        List<DeviceViewModel> involved = Devices
-            .Where(d => d.IsEnabled && !double.IsNaN(d.EndpointVolume) && d.EndpointVolume > 0.001)
-            .ToList();
-
-        if (involved.Count == 0)
-        {
-            StatusText = Localizer.Instance["Status.AutoMatchNone"];
-            return;
-        }
-
-        double reference = involved.Min(d => d.EndpointVolume);
-
-        foreach (DeviceViewModel device in involved)
-        {
-            device.EndpointVolume = reference;
-        }
-
-        // Write immediately rather than waiting for the debounce: this is a deliberate one-shot action.
-        FlushEndpointVolumeWrites();
-
-        StatusText = Localizer.Instance.Format(
-            "Status.AutoMatchDone",
-            involved.Count,
-            string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{reference * 100:0}"));
     }
 
     /// <summary>

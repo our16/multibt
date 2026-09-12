@@ -100,18 +100,13 @@ public sealed class Localizer : INotifyPropertyChanged
         ["App.Language"] = "语言：",
 
         // device list
-        ["Devices.Group"] = "输出设备",
         ["Devices.Refresh"] = "刷新设备",
         ["Devices.Refresh.Tip"] = "重新枚举设备，并刷新各设备的 Windows 音量",
-        ["Devices.AutoMatch"] = "自动对齐响度",
-        ["Devices.AutoMatch.Tip"] = "把所有已启用设备的音量统一到其中最小的一个（只降不升）。音箱灵敏度差异仍需手动微调。",
-        ["Devices.LatencyPreset"] = "延迟预设 (ms)：",
         ["Devices.SyncMode"] = "同步模式：",
         ["SyncMode.AlignAll"] = "全部对齐（音乐）",
         ["SyncMode.WiredOnly"] = "只对齐有线组（视频）",
         ["Language.Chinese"] = "中文",
         ["Language.English"] = "English",
-        ["Devices.None"] = "（未发现设备）",
 
         // primary marker
         ["Primary.Marker"] = "主设备",
@@ -149,7 +144,6 @@ public sealed class Localizer : INotifyPropertyChanged
         ["Transport.PairedNotConnected"] = "已配对未连接",
 
         // latency summary
-        ["Latency.NotMeasured"] = "未测量",
         ["Latency.Estimated"] = "估算补偿 {0} ms",
         ["Latency.NoCompensation"] = "无补偿",
         ["Latency.Measured"] = "测量 {0} ms",
@@ -234,14 +228,11 @@ public sealed class Localizer : INotifyPropertyChanged
         ["Status.DeviceSkippedSource"] = "已跳过（捕获源）",
         ["Status.Running"] = "运行中",
         ["Status.Failed"] = "失败",
-        ["Status.AutoMatchNone"] = "无法自动对齐：没有读到任何设备的端点音量。请手动调整滑杆。",
-        ["Status.AutoMatchDone"] = "已把 {0} 个设备的音量统一到 {1}%（取其中最小的一个）。音箱灵敏度差异仍需手动微调滑杆。",
         ["Status.VolumeFailed"] = "无法调整「{0}」的设备音量。",
         ["Status.SourceCannotBeOutput"] = "「{0}」正在作为捕获源，不能同时作为输出（否则会形成音频回授）。",
         ["Status.RestartingForSource"] = "正在切换到「{0}」并重建输出...",
         ["Status.CouldNotStart"] = "无法开始：{0}",
         ["Status.CouldNotToggle"] = "无法切换 {0}：{1}",
-        ["Status.AudioError"] = "音频错误：{0}",
 
         // capture source warning
         ["Capture.NotDefault"] = "⚠ 当前输入「{0}」不是 Windows 默认输出设备，系统声音不会送到它，其他设备会没声音。把它设为默认输出，或把输入改为「自动」。",
@@ -276,18 +267,13 @@ public sealed class Localizer : INotifyPropertyChanged
         ["App.WindowTitle"] = "MultiBT — Multi-Device Audio",
         ["App.Language"] = "Language:",
 
-        ["Devices.Group"] = "Output devices",
         ["Devices.Refresh"] = "Refresh devices",
         ["Devices.Refresh.Tip"] = "Re-enumerate devices and refresh each device's Windows volume",
-        ["Devices.AutoMatch"] = "Match loudness",
-        ["Devices.AutoMatch.Tip"] = "Set every enabled device to the lowest volume among them (lowers only, never raises). Speaker sensitivity still needs manual trimming.",
-        ["Devices.LatencyPreset"] = "Latency preset (ms):",
         ["Devices.SyncMode"] = "Sync mode:",
         ["SyncMode.AlignAll"] = "Align all (music)",
         ["SyncMode.WiredOnly"] = "Wired group only (video)",
         ["Language.Chinese"] = "中文",
         ["Language.English"] = "English",
-        ["Devices.None"] = "(no devices found)",
 
         ["Primary.Marker"] = "Primary",
         ["Primary.Set"] = "Set as primary",
@@ -321,7 +307,6 @@ public sealed class Localizer : INotifyPropertyChanged
         ["Transport.Other"] = "Other",
         ["Transport.PairedNotConnected"] = "paired, not connected",
 
-        ["Latency.NotMeasured"] = "not measured",
         ["Latency.Estimated"] = "estimated compensation {0} ms",
         ["Latency.NoCompensation"] = "no compensation",
         ["Latency.Measured"] = "measured {0} ms",
@@ -404,12 +389,9 @@ public sealed class Localizer : INotifyPropertyChanged
         ["Status.DeviceSkippedSource"] = "skipped (capture source)",
         ["Status.Running"] = "running",
         ["Status.Failed"] = "failed",
-        ["Status.AutoMatchNone"] = "Cannot match loudness: no device's endpoint volume could be read. Adjust the sliders manually.",
-        ["Status.AutoMatchDone"] = "Set {0} device(s) to {1}% (the lowest among them). Speaker sensitivity still needs a manual trim.",
         ["Status.VolumeFailed"] = "Could not change the device volume of \"{0}\".",
         ["Status.CouldNotStart"] = "Could not start: {0}",
         ["Status.CouldNotToggle"] = "Could not change {0}: {1}",
-        ["Status.AudioError"] = "Audio error: {0}",
 
         ["Capture.NotDefault"] = "⚠ The input \"{0}\" is not the Windows default output, so system audio never reaches it and the other devices stay silent. Make it the default, or set the input to \"Auto\".",
 

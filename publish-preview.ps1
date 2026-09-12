@@ -195,7 +195,7 @@ $asUtf8 = [System.Text.Encoding]::UTF8.GetString($bytes)
 $markers = @(
     '端点音量',        # device-volume status messages (C# literal)
     '主设备',          # primary-device UI text (C# literal)
-    '自动对齐响度',    # button label (XAML, via the localiser table)
+    '正前方',          # direction picker label (localiser table)
     '设备音量'         # slider label, added with the volume redesign
 )
 

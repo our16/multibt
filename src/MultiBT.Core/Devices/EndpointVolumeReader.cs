@@ -21,12 +21,12 @@ namespace MultiBT.Core.Devices;
 /// <item><description>
 /// <b>Each output endpoint has its own volume.</b> A Bluetooth speaker at 100 % and a DAC at 61 %
 /// will be audibly different at the same chain gain. That difference is <i>known and measurable</i>,
-/// so it can be equalised automatically — see <c>AutoMatchLevels</c>.
+/// so it is read out, shown per device, and adjusted per device.
 /// </description></item>
 /// <item><description>
 /// <b>Each device's speaker/amp sensitivity is unknown.</b> No API exposes it. This is the part that
-/// can only be fixed by ear, which is why the per-device slider must remain the final authority on
-/// top of any automatic matching.
+/// can only be fixed by ear, which is why the per-device slider is the final authority: a reading
+/// explains a mismatch, it cannot settle one.
 /// </description></item>
 /// </list>
 /// </remarks>
