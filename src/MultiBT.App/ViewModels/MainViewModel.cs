@@ -912,6 +912,37 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(SystemLatencySummary));
     }
 
+    /// <summary>
+    /// Whole-mirror volume, 0..1, applied on top of every device's own volume.
+    /// </summary>
+    /// <remarks>
+    /// Applies to every device that is part of the mirror, which is exactly the set the user has ticked.
+    /// It does not touch any device's Windows volume, so it can always be returned to 100 %.
+    /// </remarks>
+    public double MasterVolume
+    {
+        get => _settings.Engine.MasterVolume;
+        set
+        {
+            double clamped = Math.Clamp(value, 0.0, 1.0);
+
+            if (Math.Abs(_settings.Engine.MasterVolume - clamped) < 0.0001)
+            {
+                return;
+            }
+
+            _settings.Engine.MasterVolume = clamped;
+            ApplyGainsToEngine();
+
+            OnPropertyChanged(nameof(MasterVolume));
+            OnPropertyChanged(nameof(MasterVolumePercent));
+            QueueSettingsSave();
+        }
+    }
+
+    /// <summary>The master volume as a percentage, for the label beside the slider.</summary>
+    public string MasterVolumePercent => $"{MasterVolume * 100:0}%";
+
     /// <summary>Persists settings atomically.</summary>
     public void SaveSettings()
     {
@@ -1040,8 +1071,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             foreach (OutputChannel channel in _engine.Channels)
             {
                 // Chain gain, not the device volume: pausing mutes the whole mirror without touching
-                // the user's Windows volume settings, so resuming restores exactly what was there.
-                channel.SetGain(paused ? 0f : 1f);
+                // the user's Windows volume settings, so resuming restores exactly what was there. The
+                // master volume rides on the same multiplier, so resuming keeps the level the user set.
+                channel.SetGain(paused ? 0f : (float)MasterVolume);
             }
         }
 
@@ -1470,6 +1502,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             IsRunning = true;
             _diagnosticsTimer.Start();
 
+            // Channels are constructed at unity gain, so the stored master volume has to be applied now or
+            // it would only take effect the next time the slider moves.
+            ApplyGainsToEngine();
+
             StatusText = Localizer.Instance.Format("Status.Mirroring", engine.Channels.Count, _settings.Engine.EngineLatencyMs);
         }
         catch (Exception ex)
@@ -1541,7 +1577,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        float chainGain = IsPaused ? 0f : 1f;
+        float chainGain = IsPaused ? 0f : (float)MasterVolume;
 
         foreach (OutputChannel channel in _engine.Channels)
         {

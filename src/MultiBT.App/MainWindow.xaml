@@ -481,6 +481,9 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <Button Grid.Column="0" Style="{StaticResource PrimaryButton}" MinWidth="132"
@@ -490,7 +493,21 @@
             <Button Grid.Column="1" Style="{StaticResource BaseButton}" MinWidth="96" Margin="8,0,0,0"
                     Click="OnStop" IsEnabled="{Binding IsRunning}"
                     Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Stop]}" />
-            <Button Grid.Column="3" Style="{StaticResource BaseButton}" MinWidth="96"
+
+            <!--
+              Master volume: multiplies every ticked device at once. It is a gain on top of their own
+              volumes, so it changes loudness without disturbing the balance between devices, and 100 %
+              always means "exactly what each device is set to".
+            -->
+            <TextBlock Grid.Column="3" Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
+                       Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Master.Label]}" />
+            <Slider Grid.Column="4" Width="150" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
+                    Value="{Binding MasterVolume, Mode=TwoWay}" VerticalAlignment="Center"
+                    ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Master.Tip]}" />
+            <TextBlock Grid.Column="5" Style="{StaticResource ValueText}" Width="44" Margin="6,0,12,0"
+                       Text="{Binding MasterVolumePercent}" />
+
+            <Button Grid.Column="6" Style="{StaticResource BaseButton}" MinWidth="96"
                     Click="OnSave"
                     Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Save]}" />
         </Grid>

@@ -52,6 +52,16 @@ public sealed class EngineSettings
     public string? SourceDeviceId { get; set; }
 
     /// <summary>
+    /// Whole-mirror gain, 0..1, multiplied on top of every device's own volume.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately a gain rather than a rescaling of the devices' Windows volumes: rescaling would round
+    /// each absolute volume on every drag, so the relative balance would drift and returning to 100 % could
+    /// not restore the original numbers. This leaves those volumes alone.
+    /// </remarks>
+    public double MasterVolume { get; set; } = 1.0;
+
+    /// <summary>
     /// The virtual cable Windows should render into, or <c>null</c> when none is configured.
     /// </summary>
     /// <remarks>
