@@ -822,9 +822,38 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         && !string.Equals(ResolvedSourceEndpointId, _defaultRenderEndpointId, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Actionable warning for the UI, or null when the capture source is correct.</summary>
-    public string? CaptureSourceWarning => CaptureSourceIsNotDefault
-        ? Localizer.Instance.Format("Capture.NotDefault", _primaryDevice!.DisplayName)
-        : null;
+    /// <remarks>
+    /// Names the RESOLVED source, and tolerates not being able to resolve it. The primary device used to be
+    /// dereferenced here with the null-forgiving operator, which was safe only while the condition above
+    /// guaranteed it was non-null. It does not any more — an explicit input choice outranks the primary —
+    /// and during construction the primary is always null because RefreshDevices binds it later, so the
+    /// old code threw NullReferenceException before the window was ever shown.
+    /// </remarks>
+    public string? CaptureSourceWarning =>
+        CaptureSourceIsNotDefault && ResolvedSourceEndpointName is string name
+            ? Localizer.Instance.Format("Capture.NotDefault", name)
+            : null;
+
+    /// <summary>
+    /// Display name of the endpoint the mirror will capture, or null when it cannot be resolved.
+    /// </summary>
+    private string? ResolvedSourceEndpointName
+    {
+        get
+        {
+            string? id = ResolvedSourceEndpointId;
+
+            if (string.IsNullOrEmpty(id))
+            {
+                return null;
+            }
+
+            return _devices
+                .EnumerateRenderEndpoints(includeInactive: true)
+                .FirstOrDefault(e => string.Equals(e.EndpointId, id, StringComparison.OrdinalIgnoreCase))
+                ?.FriendlyName;
+        }
+    }
 
     public bool HasCaptureSourceWarning => CaptureSourceWarning is not null;
 

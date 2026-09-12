@@ -228,7 +228,7 @@ public sealed class Localizer : INotifyPropertyChanged
         ["Status.AudioError"] = "音频错误：{0}",
 
         // capture source warning
-        ["Capture.NotDefault"] = "⚠ 主设备「{0}」不是 Windows 默认输出设备。MultiBT 捕获的是「主设备正在播放的声音」，而系统声音只会送到 Windows 默认设备——所以其他设备会完全没有声音。请把「主设备」改为 Windows 默认输出设备，或在 Windows 设置里把这个设备设为默认输出。",
+        ["Capture.NotDefault"] = "⚠ 当前输入「{0}」不是 Windows 默认输出设备，系统声音不会送到它，其他设备会没声音。把它设为默认输出，或把输入改为「自动」。",
 
         // tray
         ["Tray.Tooltip"] = "MultiBT — 多设备音频",
@@ -379,7 +379,7 @@ public sealed class Localizer : INotifyPropertyChanged
         ["Status.CouldNotToggle"] = "Could not change {0}: {1}",
         ["Status.AudioError"] = "Audio error: {0}",
 
-        ["Capture.NotDefault"] = "⚠ Primary \"{0}\" is not the Windows default output device. MultiBT captures what the PRIMARY endpoint is rendering, and Windows only sends system audio to the default — so the other devices will be completely silent. Set the primary to the Windows default output, or make this device the default in Windows Settings.",
+        ["Capture.NotDefault"] = "⚠ The input \"{0}\" is not the Windows default output, so system audio never reaches it and the other devices stay silent. Make it the default, or set the input to \"Auto\".",
 
         ["Tray.Tooltip"] = "MultiBT — multi-device audio",
         ["Tray.TooltipState"] = "MultiBT — {0} ({1} device(s))",

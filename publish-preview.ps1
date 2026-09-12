@@ -208,6 +208,71 @@ if (-not $SkipZip) {
     Compress-Archive -Path (Join-Path $outputDirectory '*') -DestinationPath $zipPath
 }
 
+# ---------------------------------------------------------------------------- startup check
+#
+# A published build must actually RUN. Everything above can pass while the app throws on construction and
+# shows an error dialog instead of a window -- which is exactly what happened: a null-forgiving dereference
+# in a property that the UI reads during startup threw NullReferenceException, and the gate said nothing
+# because it only ever inspected the binary as data.
+#
+# Deliberately run AFTER publishing, on the real artefact, and refusing to report success if it dies.
+Write-Host ''
+Write-Host 'Starting the published build...' -ForegroundColor Cyan
+
+$probe = Start-Process -FilePath $executable -PassThru
+Start-Sleep -Seconds 14
+$probe.Refresh()
+
+if ($probe.HasExited) {
+    Write-Host "FATAL: the published build exited on startup (code $($probe.ExitCode))." -ForegroundColor Red
+    Write-Host 'It is not usable.' -ForegroundColor Red
+    exit 1
+}
+
+# A crash during startup does NOT kill the process and does NOT set an informative window title: the
+# application shows a modal error dialog whose title is simply the application name, exactly as it appears
+# in a bug report. So check for a DIALOG by window class -- standard dialogs are class #32770, while the WPF
+# main window is not -- rather than trusting the title.
+Add-Type @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class StartupProbe {
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc cb, IntPtr p);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
+    private delegate bool EnumProc(IntPtr h, IntPtr p);
+    public static List<string> VisibleDialogClasses(uint targetPid) {
+        var found = new List<string>();
+        EnumWindows((h, _) => {
+            uint pid; GetWindowThreadProcessId(h, out pid);
+            if (pid == targetPid && IsWindowVisible(h)) {
+                var sb = new StringBuilder(256);
+                GetClassName(h, sb, sb.Capacity);
+                if (sb.ToString() == "#32770") { found.Add(sb.ToString()); }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+}
+'@
+
+$dialogs = [StartupProbe]::VisibleDialogClasses([uint32]$probe.Id)
+
+if ($dialogs.Count -gt 0) {
+    Write-Host "FATAL: the published build is showing an error dialog on startup (title '$($probe.MainWindowTitle)')." -ForegroundColor Red
+    Write-Host 'The build is not usable -- read the dialog text for the exception.' -ForegroundColor Red
+    Stop-Process -Id $probe.Id -Force -ErrorAction SilentlyContinue
+    exit 1
+}
+
+Write-Host "Startup OK: '$($probe.MainWindowTitle)'." -ForegroundColor Green
+Stop-Process -Id $probe.Id -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 800
+
 # ---------------------------------------------------------------------------- report
 $info = Get-Item $executable
 
