@@ -8,32 +8,130 @@
         mc:Ignorable="d"
         Title="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.WindowTitle]}"
         Icon="/Assets/multibt.ico"
-        Height="660" Width="920"
-        MinHeight="480" MinWidth="760">
+        Height="680" Width="960"
+        MinHeight="560" MinWidth="860"
+        Background="#F4F5F7"
+        FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
 
     <!--
       All user-visible text is bound through Localizer rather than written inline, so the language can
       be switched AT RUNTIME. Localizer raises PropertyChanged("Item[]"), which is what tells WPF every
       indexer result is stale; without that the switch would silently do nothing.
+
+      LAYOUT STABILITY is a hard requirement, not a preference. Every region below has a fixed height and
+      every text line is single-line with trimming, because content that appears, disappears or grows must
+      not move anything else on the page:
+
+        * the notice strip KEEPS its height when there is no notice, so showing one cannot push the
+          device list down. This replaced three banners stacked in one grid row at hand-computed offsets
+          (0,10 / 0,42 / 0,74), where each appearance shifted everything below it.
+        * device rows are a fixed height, so a status that changes from "running" to a long error cannot
+          change the row height and scroll the list.
+        * value labels and the primary button have fixed widths, so a number going from "8 ms" to
+          "1200 ms" cannot push the sliders sideways.
+        * diagnostics is collapsed by default, so its variable-length text never participates in layout.
     -->
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
 
-        <Style x:Key="SectionLabel" TargetType="TextBlock">
+        <SolidColorBrush x:Key="Accent" Color="#2563EB" />
+        <SolidColorBrush x:Key="TextPrimary" Color="#111827" />
+        <SolidColorBrush x:Key="TextMuted" Color="#6B7280" />
+        <SolidColorBrush x:Key="CardBorder" Color="#E5E7EB" />
+        <SolidColorBrush x:Key="NoticeText2" Color="#8A5A00" />
+
+        <!-- A rounded, flat button. The default WPF chrome is what made the old window look dated. -->
+        <Style x:Key="BaseButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="7"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#F3F4F6" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
+            <Setter Property="Background" Value="{StaticResource Accent}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Accent}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Padding" Value="22,7" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Margin" Value="0,0,0,6" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="7"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1D4ED8" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
-        <Style x:Key="HintText" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="11" />
-            <Setter Property="Foreground" Value="#666" />
-            <Setter Property="TextWrapping" Value="Wrap" />
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="14,12" />
         </Style>
 
-        <Style x:Key="WarningText" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="11" />
-            <Setter Property="Foreground" Value="#B35A00" />
-            <Setter Property="TextWrapping" Value="Wrap" />
+        <!-- A small muted field label. Labels are deliberately terse: the controls are self-evident. -->
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource TextMuted}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- Right-aligned numerals in a fixed slot, so the widest value cannot push the layout. -->
+        <Style x:Key="ValueText" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+            <Setter Property="TextAlignment" Value="Right" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+
+        <!-- Single-line only. Anything that wraps can change height and move the page. -->
+        <Style x:Key="OneLine" TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="NoWrap" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
     </Window.Resources>
 
@@ -47,205 +145,263 @@
         <KeyBinding Key="Z" Modifiers="Control+Shift" Command="{Binding RedoCommand}" />
     </Window.InputBindings>
 
-    <Grid Margin="14">
+    <Grid Margin="16,14,16,14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Header -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal">
-            <TextBlock Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.Heading]}"
-                       FontSize="20" FontWeight="Bold" VerticalAlignment="Center" />
-            <TextBlock Text="{Binding StatusText}" Margin="16,0,0,0" VerticalAlignment="Center" Foreground="#444" />
+        <!-- ============================ header ============================ -->
+        <Grid Grid.Row="0" Height="34">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
 
-            <TextBlock Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.Language]}"
-                       Margin="24,0,6,0" VerticalAlignment="Center" Foreground="#666" />
-            <ComboBox x:Name="LanguageBox" Width="120" VerticalAlignment="Center"
-                      SelectionChanged="OnLanguageSelectionChanged" />
-        </StackPanel>
+            <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                       Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.Heading]}"
+                       FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" />
 
-        <!-- Settings warning: corruption or a newer schema is surfaced, never swallowed -->
-        <Border Grid.Row="1" Margin="0,10,0,0" Padding="10" CornerRadius="4"
-                Background="#FFF4E5" BorderBrush="#E0B070" BorderThickness="1"
-                Visibility="{Binding HasSettingsWarning, Converter={StaticResource BoolToVisibility}}">
-            <TextBlock Text="{Binding SettingsWarning}" TextWrapping="Wrap" Foreground="#8A4B00" />
-        </Border>
+            <!-- Status is single-line and clipped: it changes constantly and must not reflow the header. -->
+            <TextBlock Grid.Column="1" Style="{StaticResource OneLine}" Margin="14,0,14,0"
+                       Foreground="{StaticResource TextMuted}" FontSize="12"
+                       Text="{Binding StatusText}" />
 
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
+                           Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.Language]}" />
+                <ComboBox x:Name="LanguageBox" Width="104"
+                          SelectionChanged="OnLanguageSelectionChanged" />
+            </StackPanel>
+        </Grid>
+
+        <!-- ============================ notice ============================ -->
         <!--
-          Capture-source warning. This is the single most likely reason "other devices make no
-          sound": the mirror captures what the SOURCE endpoint is rendering, so a source that is not
-          Windows' default output captures silence and every output goes quiet with no error at all.
+          Height is FIXED and the row is ALWAYS present. The border only changes colour, so a notice
+          appearing or disappearing cannot move anything: the space is already reserved.
         -->
-        <Border Grid.Row="1" Margin="0,42,0,0" Padding="10" CornerRadius="4"
-                Background="#FDECEA" BorderBrush="#D9534F" BorderThickness="1"
-                Visibility="{Binding HasCaptureSourceWarning, Converter={StaticResource BoolToVisibility}}">
-            <TextBlock Text="{Binding CaptureSourceWarning}" TextWrapping="Wrap" Foreground="#8A1F1A" />
+        <Border Grid.Row="1" Height="30" Margin="0,10,0,0" CornerRadius="7"
+                BorderThickness="1" Padding="10,0">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="BorderBrush" Value="Transparent" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasNotice}" Value="True">
+                            <Setter Property="Background" Value="#FFF8E7" />
+                            <Setter Property="BorderBrush" Value="#EFCB84" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+
+            <TextBlock Style="{StaticResource OneLine}" FontSize="12"
+                       Foreground="{StaticResource NoticeText2}"
+                       Text="{Binding NoticeText}"
+                       ToolTip="{Binding NoticeText}" />
         </Border>
 
-        <!--
-          Virtual-cable guidance. Without a cable the default device always plays natively and therefore
-          cannot be delayed or volume-controlled — which reads as "the primary device is out of control"
-          rather than as a missing prerequisite.
-        -->
-        <Border Grid.Row="1" Margin="0,74,0,0" Padding="10" CornerRadius="4"
-                Background="#FFF8E1" BorderBrush="#D9B44A" BorderThickness="1"
-                Visibility="{Binding HasInputNote, Converter={StaticResource BoolToVisibility}}">
-            <TextBlock Text="{Binding InputNote}" TextWrapping="Wrap" Foreground="#5A4A1F" />
-        </Border>
-
-        <!-- Device list -->
-        <GroupBox Grid.Row="2" Margin="0,12,0,0" Padding="8"
-                  Header="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Group]}">
+        <!-- ============================ devices ============================ -->
+        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,10,0,0">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                    <Button Padding="10,4" Click="OnRefreshDevices"
-                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Refresh]}"
-                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Refresh.Tip]}" />
-                    <Button Padding="10,4" Margin="8,0,0,0" Click="OnAutoMatchLevels"
-                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.AutoMatch]}"
-                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.AutoMatch.Tip]}" />
-                    <TextBlock Margin="18,0,6,0" VerticalAlignment="Center"
-                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.LatencyPreset]}" />
-                    <ComboBox x:Name="LatencyPresetBox" Width="90"
-                              SelectionChanged="OnLatencyPresetChanged" />
-                    <TextBlock Margin="18,0,6,0" VerticalAlignment="Center"
-                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.SyncMode]}" />
-                    <ComboBox x:Name="SyncModeBox" Width="150"
-                              SelectionChanged="OnSyncModeChanged" />
-                    <TextBlock Margin="18,0,6,0" VerticalAlignment="Center"
+                <!-- toolbar: one row, fixed height, fixed-width controls -->
+                <Grid Grid.Row="0" Height="32" Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
                                Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Label]}" />
-                    <ComboBox x:Name="SinkBox" Width="210" VerticalAlignment="Center"
+                    <ComboBox Grid.Column="1" x:Name="SinkBox" Width="250" VerticalAlignment="Center"
                               SelectionChanged="OnCaptureSinkChanged"
                               ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Tip]}" />
 
-                    <Button Padding="8,3" Margin="6,0,0,0" Click="OnGetVirtualCable"
+                    <TextBlock Grid.Column="2" Style="{StaticResource FieldLabel}" Margin="14,0,6,0"
+                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.LatencyPreset]}" />
+                    <ComboBox Grid.Column="3" x:Name="LatencyPresetBox" Width="80" VerticalAlignment="Center"
+                              SelectionChanged="OnLatencyPresetChanged" />
+
+                    <TextBlock Grid.Column="4" Style="{StaticResource FieldLabel}" Margin="14,0,6,0"
+                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.SyncMode]}" />
+                    <ComboBox Grid.Column="5" x:Name="SyncModeBox" Width="150" HorizontalAlignment="Left"
+                              VerticalAlignment="Center" SelectionChanged="OnSyncModeChanged" />
+
+                    <Button Grid.Column="6" Style="{StaticResource BaseButton}" Margin="0,0,6,0"
+                            Click="OnRefreshDevices"
+                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Refresh]}"
+                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Refresh.Tip]}" />
+                    <Button Grid.Column="7" Style="{StaticResource BaseButton}" Margin="0,0,6,0"
+                            Click="OnAutoMatchLevels"
+                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.AutoMatch]}"
+                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.AutoMatch.Tip]}" />
+                    <Button Grid.Column="8" Style="{StaticResource BaseButton}"
+                            Click="OnGetVirtualCable"
                             Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable]}"
                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable.Tip]}" />
-                </StackPanel>
+                </Grid>
 
-                <ListBox Grid.Row="1" x:Name="DeviceList" BorderThickness="0"
+                <ListBox Grid.Row="1" x:Name="DeviceList" BorderThickness="0" Background="Transparent"
                          ItemsSource="{Binding Devices}"
                          HorizontalContentAlignment="Stretch"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         VirtualizingPanel.ScrollUnit="Pixel">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="Bd" CornerRadius="8" Background="Transparent">
+                                            <ContentPresenter />
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="#F7F8FA" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <Grid Margin="2,6">
+                            <!-- Fixed height: a status that changes length must not resize the row. -->
+                            <Grid Height="58" ToolTip="{Binding LatencySummary}">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
-                                <!--
-                                  Primary (capture source) marker, as explicit TEXT rather than a radio dot.
-                                  The button doubles as the selector on rows that are not primary yet.
-                                -->
-                                <Button Grid.Column="0" Click="OnPrimaryDeviceClick"
-                                        Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Marker]}"
-                                        ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Tip]}"
-                                        VerticalAlignment="Center" Margin="0,0,8,0" Padding="8,2"
-                                        Visibility="{Binding IsPrimary, Converter={StaticResource BoolToVisibility}}" />
+                                <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                          VerticalAlignment="Center" Margin="2,0,12,0" />
 
-                                <Button Grid.Column="0" Click="OnPrimaryDeviceClick"
-                                        Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Set]}"
-                                        ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Tip]}"
-                                        VerticalAlignment="Center" Margin="0,0,8,0" Padding="8,2"
-                                        Visibility="{Binding IsNotPrimary, Converter={StaticResource BoolToVisibility}}" />
-
-                                <CheckBox Grid.Column="1" IsChecked="{Binding IsEnabled, Mode=TwoWay}"
-                                          VerticalAlignment="Center" Margin="0,0,10,0" />
-
-                                <StackPanel Grid.Column="2">
+                                <!-- name + state; the latency detail lives in the row tooltip -->
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                     <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding ConnectionHint}" Margin="8,0,0,0" Foreground="#B2650A"
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"
+                                                   FontSize="13" Foreground="{StaticResource TextPrimary}"
+                                                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource OneLine}" Margin="8,0,0,0" FontSize="11"
+                                                   Foreground="#B45309" Text="{Binding ConnectionHint}"
                                                    Visibility="{Binding HasConnectionHint, Converter={StaticResource BoolToVisibility}}" />
-                                        <TextBlock Text="{Binding Status}" Margin="8,0,0,0" Foreground="#0A7" />
                                     </StackPanel>
-                                    <TextBlock Text="{Binding LatencySummary}" Style="{StaticResource HintText}" />
-                                    <TextBlock Text="{Binding EndpointVolumeLabel}" Style="{StaticResource HintText}" />
+                                    <TextBlock Style="{StaticResource OneLine}" FontSize="11" Margin="0,1,0,0"
+                                               Foreground="{StaticResource TextMuted}" Text="{Binding Status}" />
                                 </StackPanel>
 
-                                <StackPanel Grid.Column="3" Orientation="Vertical" VerticalAlignment="Center">
-                                    <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource HintText}" VerticalAlignment="Center" Margin="0,0,6,0"
+                                <!-- delay -->
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
+                                            Margin="0,0,18,0">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
+                                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Label]}" />
+                                    <Slider Width="132" Minimum="0" Maximum="2000" SmallChange="1" LargeChange="50"
+                                            Value="{Binding ManualOffsetMs, Mode=TwoWay}" VerticalAlignment="Center"
+                                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Tip]}" />
+                                    <TextBlock Style="{StaticResource ValueText}" Width="54" Margin="6,0,0,0"
+                                               Text="{Binding DelayLabel}" />
+                                </StackPanel>
+
+                                <!-- volume: drives the device's ACTUAL Windows volume, so 100 % means the device's 100 % -->
+                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center"
+                                            Margin="0,0,16,0">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
                                                Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Volume.Label]}" />
-                                    <!--
-                                      Drives the device's ACTUAL Windows volume, and is initialised from it, so
-                                      the slider shows reality and 100 % means 100 % of the device.
-                                    -->
-                                    <Slider Width="130" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
+                                    <Slider Width="108" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
                                             Value="{Binding EndpointVolume, Mode=TwoWay}" VerticalAlignment="Center"
                                             IsEnabled="{Binding HasEndpointVolume}"
                                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Volume.Tip]}" />
-                                    <TextBlock Text="{Binding EndpointVolumePercent}" Width="42" Margin="6,0,0,0"
-                                               VerticalAlignment="Center" TextAlignment="Right" />
-                                    </StackPanel>
-
-                                    <!--
-                                      Manual delay. Without this a device that plays early could not be
-                                      brought into line at all: compensation is computed from measurements,
-                                      and with none taken it is zero for every device, so each one simply
-                                      plays at its own natural latency.
-                                    -->
-                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                        <TextBlock Style="{StaticResource HintText}" VerticalAlignment="Center" Margin="0,0,6,0"
-                                                   Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Label]}" />
-                                        <Slider Width="140" Minimum="0" Maximum="2000" SmallChange="1" LargeChange="50"
-                                                Value="{Binding ManualOffsetMs, Mode=TwoWay}" VerticalAlignment="Center"
-                                                ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Tip]}" />
-                                        <TextBlock Text="{Binding DelayLabel}" Width="52" Margin="6,0,0,0"
-                                                   VerticalAlignment="Center" TextAlignment="Right" />
-                                    </StackPanel>
+                                    <TextBlock Style="{StaticResource ValueText}" Width="42" Margin="6,0,0,0"
+                                               Text="{Binding EndpointVolumePercent}" />
                                 </StackPanel>
+
+                                <!-- Fixed width: "主设备" and "设为主设备" must not shift the sliders -->
+                                <Button Grid.Column="4" Width="86" VerticalAlignment="Center"
+                                        Style="{StaticResource BaseButton}" Padding="0,4"
+                                        Click="OnPrimaryDeviceClick"
+                                        ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Tip]}">
+                                    <Button.Content>
+                                        <TextBlock FontSize="11" TextTrimming="CharacterEllipsis">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text"
+                                                            Value="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Set]}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPrimary}" Value="True">
+                                                            <Setter Property="Text"
+                                                                    Value="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Marker]}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Button.Content>
+                                </Button>
                             </Grid>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
+
+                <TextBlock Grid.Row="2" Style="{StaticResource OneLine}" FontSize="11" Margin="2,10,0,0"
+                           Foreground="{StaticResource TextMuted}" Text="{Binding SystemLatencySummary}"
+                           ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[SystemLatency.Hint]}" />
             </Grid>
-        </GroupBox>
-
-        <!-- System latency: the number that decides whether video is watchable -->
-        <Border Grid.Row="3" Margin="0,10,0,0" Padding="10" CornerRadius="4"
-                Background="#F4F7FB" BorderBrush="#B8C6D8" BorderThickness="1">
-            <StackPanel>
-                <TextBlock Text="{Binding SystemLatencySummary}" FontWeight="SemiBold" />
-                <TextBlock Style="{StaticResource HintText}"
-                           Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[SystemLatency.Hint]}" />
-            </StackPanel>
         </Border>
 
-        <!-- Diagnostics -->
-        <Border Grid.Row="4" Margin="0,8,0,0" Padding="10" CornerRadius="4"
-                Background="#F7F7F7" BorderBrush="#DDD" BorderThickness="1">
-            <StackPanel>
-                <TextBlock Style="{StaticResource SectionLabel}"
-                           Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Diagnostics.Group]}" />
-                <TextBlock Text="{Binding DiagnosticsSummary}" Style="{StaticResource HintText}" />
-            </StackPanel>
-        </Border>
+        <!-- ============================ diagnostics ============================ -->
+        <!-- Collapsed by default: its text is variable-length and must not affect the layout until asked for. -->
+        <Expander Grid.Row="3" Margin="0,10,0,0" Padding="0"
+                  Header="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Diagnostics.Group]}"
+                  Foreground="{StaticResource TextMuted}" FontSize="12">
+            <Border Style="{StaticResource Card}" Margin="0,8,0,0">
+                <TextBlock Text="{Binding DiagnosticsSummary}" FontSize="11"
+                           Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" />
+            </Border>
+        </Expander>
 
-        <!-- Transport controls -->
-        <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,12,0,0">
-            <Button Padding="16,6" Click="OnStart" IsEnabled="{Binding IsNotRunning}"
-                    Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Start]}" />
-            <Button Padding="16,6" Margin="8,0,0,0" Click="OnStop" IsEnabled="{Binding IsRunning}"
+        <!-- ============================ actions ============================ -->
+        <Grid Grid.Row="4" Height="40" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Button Grid.Column="0" Style="{StaticResource PrimaryButton}" MinWidth="132"
+                    Click="OnStart" IsEnabled="{Binding IsNotRunning}"
+                    Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Start]}"
+                    ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.NotVerified]}" />
+            <Button Grid.Column="1" Style="{StaticResource BaseButton}" MinWidth="96" Margin="8,0,0,0"
+                    Click="OnStop" IsEnabled="{Binding IsRunning}"
                     Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Stop]}" />
-            <Button Padding="16,6" Margin="8,0,0,0" Click="OnSave"
+            <Button Grid.Column="3" Style="{StaticResource BaseButton}" MinWidth="96"
+                    Click="OnSave"
                     Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Save]}" />
-            <TextBlock Style="{StaticResource HintText}" Margin="16,0,0,0" VerticalAlignment="Center"
-                       Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.NotVerified]}" />
-        </StackPanel>
+        </Grid>
     </Grid>
 </Window>

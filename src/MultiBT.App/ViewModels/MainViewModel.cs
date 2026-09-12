@@ -77,6 +77,23 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private IAudioInputBackend? _pendingBackend;
 
     /// <summary>
+    /// The Windows default output before the mirror routed it into a cable, or null when it did not.
+    /// </summary>
+    /// <remarks>
+    /// Held only while mirroring, so stopping can hand the machine back exactly as it was found.
+    /// </remarks>
+    private string? _defaultOutputBeforeMirror;
+
+    /// <summary>The cable this app pointed the Windows default output at, or null when it did not.</summary>
+    private string? _routedCableEndpointId;
+
+    /// <summary>
+    /// True while an input change is rebuilding the mirror, so the stop half does not undo the routing
+    /// only for the start half to redo it a moment later.
+    /// </summary>
+    private bool _restartingForSource;
+
+    /// <summary>
     /// Endpoint id the engine is currently capturing, or null when stopped.
     /// </summary>
     /// <remarks>
@@ -259,11 +276,29 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             AudioEndpointInfo? endpoint = ResolveEffectiveInput();
 
-            if (endpoint is null
-                || VirtualCableDetector.IsVirtualCableRenderEndpoint(endpoint.FriendlyName, endpoint.DeviceFriendlyName))
+            if (endpoint is null)
             {
-                // A cable is inaudible and exists only to be captured, so every device stays controllable.
                 return null;
+            }
+
+            if (VirtualCableDetector.IsVirtualCableRenderEndpoint(endpoint.FriendlyName, endpoint.DeviceFriendlyName))
+            {
+                // A cable is inaudible and exists only to be captured, so every device stays controllable —
+                // but only while Windows is actually rendering into it. Windows moves the default output on
+                // its own (a Bluetooth speaker reconnecting is enough), and a cable that nothing feeds is
+                // silence on every output with the app still reporting success, so say so plainly.
+                return string.Equals(CurrentDefaultRenderEndpointId(), endpoint.EndpointId, StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : Localizer.Instance.Format("Input.CableNotRoutedNote", endpoint.FriendlyName);
+            }
+
+            // A real device is captured from its own loopback, which only carries audio while Windows is
+            // rendering into THAT device. Choosing one that is not the default therefore captures silence
+            // on every output, while the real default keeps playing natively — the same shape of silent
+            // failure as a starved cable, and just as impossible to guess from the outside.
+            if (!string.Equals(CurrentDefaultRenderEndpointId(), endpoint.EndpointId, StringComparison.OrdinalIgnoreCase))
+            {
+                return Localizer.Instance.Format("Input.RealDeviceNotDefaultNote", endpoint.FriendlyName);
             }
 
             return Localizer.Instance.Format("Input.RealDeviceNote", endpoint.FriendlyName);
@@ -303,54 +338,30 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// Sets the input to a chosen endpoint, or back to "auto" when given null.
     /// </summary>
     /// <remarks>
-    /// Choosing a virtual cable also has to point the Windows default output at that same cable, because a
-    /// cable only carries audio that Windows renders into it. That is the ONE place the app touches the
-    /// default output, and it happens only because the user picked a cable. Any other endpoint is left
-    /// alone: capturing a real device works with the default wherever it already is.
+    /// Choosing does NOT touch the Windows default output. It used to, and that was wrong: selecting a
+    /// cable immediately sent all system audio into a device nothing was yet consuming, so the machine went
+    /// silent the moment the dropdown changed. The routing now happens in <c>StartAsync</c> and is undone on
+    /// stop, which ties it to the mirror actually running.
     /// </remarks>
     public void SetCaptureSink(string? endpointId)
     {
         _settings.Engine.CaptureSinkDeviceId = string.IsNullOrWhiteSpace(endpointId) ? null : endpointId;
 
-        if (_settings.Engine.CaptureSinkDeviceId is not string chosen)
-        {
-            StatusText = Localizer.Instance["Status.SinkCleared"];
-        }
-        else if (!IsVirtualCable(chosen))
-        {
-            // A real device: nothing to switch. The user's own default stays theirs.
-            StatusText = Localizer.Instance["Sink.Applied"];
-        }
-        else if (DefaultEndpointSwitcher.TrySetDefault(chosen, out string? error))
-        {
-            _defaultRenderEndpointId = chosen;
-            StatusText = Localizer.Instance["Sink.AppliedCable"];
-        }
-        else
-        {
-            StatusText = Localizer.Instance.Format("Status.SinkSwitchFailed", error);
-        }
+        StatusText = _settings.Engine.CaptureSinkDeviceId is null
+            ? Localizer.Instance["Sink.Cleared"]
+            : Localizer.Instance["Sink.Applied"];
 
         QueueSettingsSave();
         OnPropertyChanged(nameof(CaptureSinkEndpointId));
         OnPropertyChanged(nameof(HasInputNote));
         OnPropertyChanged(nameof(InputNote));
+        OnPropertyChanged(nameof(NoticeText));
+        OnPropertyChanged(nameof(HasNotice));
 
         if (_engine is not null)
         {
             _ = RestartForNewSourceAsync();
         }
-    }
-
-    /// <summary>Whether a configured endpoint is a virtual cable, by endpoint id.</summary>
-    private bool IsVirtualCable(string endpointId)
-    {
-        AudioEndpointInfo? endpoint = _devices
-            .EnumerateRenderEndpoints(includeInactive: true)
-            .FirstOrDefault(e => string.Equals(e.EndpointId, endpointId, StringComparison.OrdinalIgnoreCase));
-
-        return endpoint is not null
-            && VirtualCableDetector.IsVirtualCableRenderEndpoint(endpoint.FriendlyName, endpoint.DeviceFriendlyName);
     }
 
     /// <summary>Switches the UI language and remembers it.</summary>
@@ -379,6 +390,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(SystemLatencySummary));
         OnPropertyChanged(nameof(CaptureSourceWarning));
         OnPropertyChanged(nameof(HasCaptureSourceWarning));
+        OnPropertyChanged(nameof(NoticeText));
+        OnPropertyChanged(nameof(HasNotice));
         StatusText = Localizer.Instance["Status.Idle"];
     }
 
@@ -507,11 +520,41 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _settingsWarning, value))
             {
                 OnPropertyChanged(nameof(HasSettingsWarning));
-            }
+            OnPropertyChanged(nameof(NoticeText));
+            OnPropertyChanged(nameof(HasNotice));            }
         }
     }
 
     public bool HasSettingsWarning => !string.IsNullOrEmpty(_settingsWarning);
+
+    /// <summary>
+    /// The single most important thing to tell the user, or null when there is nothing to say.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately ONE message chosen by priority. The UI renders it in a fixed-height line, so showing it,
+    /// hiding it, or swapping it for another cannot move anything else on the page. Several messages shown
+    /// at once would need more height than one line and would reintroduce the layout jumping.
+    /// </remarks>
+    public string? NoticeText
+    {
+        get
+        {
+            if (HasSettingsWarning)
+            {
+                return SettingsWarning;
+            }
+
+            if (HasCaptureSourceWarning)
+            {
+                return CaptureSourceWarning;
+            }
+
+            return InputNote;
+        }
+    }
+
+    /// <summary>Whether <see cref="NoticeText"/> has something to say.</summary>
+    public bool HasNotice => NoticeText is not null;
 
     public string DiagnosticsSummary
     {
@@ -683,6 +726,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(CaptureSourceIsNotDefault));
         OnPropertyChanged(nameof(CaptureSourceWarning));
         OnPropertyChanged(nameof(HasCaptureSourceWarning));
+        OnPropertyChanged(nameof(NoticeText));
+        OnPropertyChanged(nameof(HasNotice));
     }
 
     /// <summary>
@@ -879,7 +924,20 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             // Stop first: it clears the capture-source id, so Start() re-evaluates the whole output
             // set from scratch and the skip logic sees the new source.
-            await StopAsync().ConfigureAwait(true);
+            //
+            // Flagged as a restart so Stop() leaves the Windows routing alone: without this the default
+            // output would flip back and forth on every input change.
+            _restartingForSource = true;
+
+            try
+            {
+                await StopAsync().ConfigureAwait(true);
+            }
+            finally
+            {
+                _restartingForSource = false;
+            }
+
             Start();
         }
         catch (Exception ex)
@@ -889,6 +947,100 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
 
+
+    /// <summary>
+    /// Points the Windows default output at the resolved source, when that source is a virtual cable.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A cable only carries audio that Windows renders into it, so choosing one as the input means the
+    /// default output has to move there, or every output stays silent while the app reports success.
+    /// </para>
+    /// <para>
+    /// Only a cable needs this. A real endpoint is already whatever the user chose as default, and moving
+    /// it would be an unrequested change to their system.
+    /// </para>
+    /// <para>
+    /// The previous default is remembered so <see cref="RestoreDefaultOutput"/> can put it back when the
+    /// mirror stops, which is what stops a stopped mirror from leaving the machine routed into an
+    /// inaudible cable.
+    /// </para>
+    /// </remarks>
+    /// <returns>A message describing a failure, or null when routing is correct.</returns>
+    private string? EnsureWindowsRendersIntoSource(MMDevice source)
+    {
+        if (!VirtualCableDetector.IsVirtualCableRenderEndpoint(source.FriendlyName, source.DeviceFriendlyName))
+        {
+            return null;
+        }
+
+        // Asked of Windows rather than of a cached id: Windows moves the default output on its own — a
+        // Bluetooth speaker reconnecting does it routinely — so a cached answer is how the app ends up
+        // capturing a cable that nothing is feeding.
+        string? current = CurrentDefaultRenderEndpointId();
+
+        if (string.Equals(current, source.ID, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (!DefaultEndpointSwitcher.TrySetDefault(source.ID, out string? error))
+        {
+            return Localizer.Instance.Format("Sink.SwitchFailed", error);
+        }
+
+        _defaultOutputBeforeMirror = current;
+        _routedCableEndpointId = source.ID;
+        _defaultRenderEndpointId = source.ID;
+        return null;
+    }
+
+    /// <summary>
+    /// Puts the Windows default output back where it was before the mirror routed it into a cable.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately conservative: it restores only when the default is still the cable this app set. If the
+    /// user has since chosen a different default, that choice stands — undoing it would be the app deciding
+    /// it knows better about the machine's audio routing.
+    /// </remarks>
+    private void RestoreDefaultOutput()
+    {
+        string? previous = _defaultOutputBeforeMirror;
+        string? cable = _routedCableEndpointId;
+
+        _defaultOutputBeforeMirror = null;
+        _routedCableEndpointId = null;
+
+        if (previous is null || cable is null)
+        {
+            return;
+        }
+
+        if (!string.Equals(CurrentDefaultRenderEndpointId(), cable, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (DefaultEndpointSwitcher.TrySetDefault(previous, out _))
+        {
+            _defaultRenderEndpointId = previous;
+        }
+    }
+
+    /// <summary>
+    /// The render endpoint Windows currently uses as default, or null when it cannot be read.
+    /// </summary>
+    private string? CurrentDefaultRenderEndpointId()
+    {
+        if (!_devices.TryGetDefaultRenderDevice(out MMDevice? current) || current is null)
+        {
+            return null;
+        }
+
+        string id = current.ID;
+        current.Dispose();
+        return id;
+    }
 
     /// <summary>
     /// Chooses the input backend for a resolved endpoint.
@@ -1042,6 +1194,23 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
 
+        // Route Windows into the cable, but only NOW — at start — and undo it at stop.
+        //
+        // A cable carries only what Windows renders into it, so choosing one as the input is meaningless
+        // unless the default output is pointed at it. Doing that at SELECTION time instead is what made
+        // the machine go silent: the dropdown changed the system's routing while nothing was consuming
+        // the cable yet, so every application's audio went somewhere inaudible. Tying the switch to the
+        // mirror's lifetime makes "Windows renders into the cable" true exactly while MultiBT is running.
+        string? routingFailure = EnsureWindowsRendersIntoSource(source);
+
+        if (routingFailure is not null)
+        {
+            // Refuse rather than run: the mirror would be silent by construction, and reporting success
+            // while no audio can arrive is the one outcome worth blocking.
+            StatusText = routingFailure;
+            return;
+        }
+
         // Which backend to use is decided HERE and nowhere else. This is the only place in the
         // application that knows a virtual cable might be involved; the engine learns nothing about it.
         IAudioInputBackend backend;
@@ -1074,23 +1243,30 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         var engine = new AudioEngine(_devices);
 
-        try
+        foreach (DeviceViewModel device in selected)
         {
-            foreach (DeviceViewModel device in selected)
+            // Skip the capture source device - using it as output causes feedback/echo
+            // Never open an output to the endpoint we are capturing: that is a feedback loop.
+            if (IsCaptureSource(device))
             {
-                // Skip the capture source device - using it as output causes feedback/echo
-                // Never open an output to the endpoint we are capturing: that is a feedback loop.
-                if (IsCaptureSource(device))
-                {
-                    device.Status = Localizer.Instance["Status.DeviceSkippedSource"];
-                    continue;
-                }
+                device.Status = Localizer.Instance["Status.DeviceSkippedSource"];
+                continue;
+            }
 
+            // EACH DEVICE FAILS ON ITS OWN.
+            //
+            // This used to sit inside one try around the whole loop, so a single endpoint that refused to
+            // open aborted the entire start: every other device stayed silent too, and the only sound left
+            // was whatever Windows happened to render natively. One bad endpoint is a normal occurrence —
+            // an unplugged speaker, a virtual cable that rejects raw mode — and it must cost its own
+            // channel, not the whole mirror.
+            try
+            {
                 // Fresh resolution per activation: a cached MMDevice dies on sleep/resume even
                 // though the endpoint still enumerates.
                 if (!_devices.TryResolveDevice(device.Endpoint.EndpointId, out MMDevice? resolved) || resolved is null)
                 {
-                    device.Status = "unavailable";
+                    device.Status = Localizer.Instance["Status.DeviceUnavailable"];
                     continue;
                 }
 
@@ -1112,7 +1288,15 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     ? $"running · delay {channel.AppliedDelayMs:0} ms"
                     : $"running · delay {channel.AppliedDelayMs:0} ms (resynced)";
             }
+            catch (Exception ex)
+            {
+                // The device keeps its own failure, in the row where the user is looking.
+                device.Status = $"{Localizer.Instance["Status.DeviceOpenFailed"]}: {ex.Message}";
+            }
+        }
 
+        try
+        {
             if (engine.Channels.Count == 0)
             {
                 StatusText = Localizer.Instance["Status.NoDeviceOpened"];
@@ -1168,6 +1352,19 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         ReleaseLiveDevices();
         DisposePendingBackend();
         _captureSourceEndpointId = null;
+
+        // Hand the machine's audio routing back unless this stop is only a step of restarting: leaving the
+        // system pointed at an inaudible cable after the user stopped mirroring is silence with no cause
+        // the user could possibly guess.
+        if (!_restartingForSource)
+        {
+            RestoreDefaultOutput();
+        }
+
+        OnPropertyChanged(nameof(HasInputNote));
+        OnPropertyChanged(nameof(InputNote));
+        OnPropertyChanged(nameof(NoticeText));
+        OnPropertyChanged(nameof(HasNotice));
         DiagnosticsSummary = Localizer.Instance["Diagnostics.None"];
     }
 

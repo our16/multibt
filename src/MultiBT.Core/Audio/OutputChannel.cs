@@ -696,10 +696,20 @@ public sealed class OutputChannel : IAsyncDisposable
             attempt.Init(source);
             return attempt;
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
             // Raw mode unsupported on this endpoint. Retry once without it rather than failing
             // the channel — but tell the caller, so the difference is visible in diagnostics.
+            //
+            // This catches Exception, not InvalidOperationException. It used to name the latter, and that
+            // made the fallback dead code for the most common case: endpoints refuse raw mode by failing a
+            // COM call, and NAudio surfaces that as CoreAudioException, which derives from COMException and
+            // therefore never matched. VB-CABLE's render endpoint rejects raw mode this way, so the retry
+            // that exists for exactly this situation never ran and the channel simply failed to open.
+            //
+            // Catching broadly is safe here because the retry is cheap and the second attempt is the
+            // authoritative one: if the endpoint is genuinely broken, the non-raw attempt fails too and that
+            // error is what propagates.
             note = $"Raw mode unavailable ({ex.Message}); continuing without it.";
 
             if (attempt is not null)

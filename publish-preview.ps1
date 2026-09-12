@@ -42,6 +42,40 @@ $project = Join-Path $root 'src/MultiBT.App/MultiBT.App.csproj'
 
 Write-Host '== MultiBT preview build ==' -ForegroundColor Cyan
 
+# ---------------------------------------------------------------------------- localisation pre-flight
+#
+# Every localisation key the ViewModel asks for must exist in BOTH language tables.
+#
+# Localizer returns the key itself when a lookup misses, so a typo does not crash or log anything -- it
+# ships a UI with the literal text "Status.SinkCleared" in it. That is exactly what happened: three keys
+# were referenced that did not exist or were misspelled, and two more existed only in Chinese, so the
+# English UI showed raw keys. Checking here makes it impossible to ship that again.
+$localizerPath = Join-Path $root 'src/MultiBT.App/Localization/Localizer.cs'
+$viewModelPath = Join-Path $root 'src/MultiBT.App/ViewModels/MainViewModel.cs'
+$localizerText = Get-Content -LiteralPath $localizerPath -Raw
+$viewModelText = Get-Content -LiteralPath $viewModelPath -Raw
+
+$usedKeys = [regex]::Matches(
+    $viewModelText,
+    'Instance\["([A-Za-z0-9_.]+)"\]|Instance\.Format\("([A-Za-z0-9_.]+)"') |
+    ForEach-Object { if ($_.Groups[1].Value) { $_.Groups[1].Value } else { $_.Groups[2].Value } } |
+    Sort-Object -Unique
+
+$missingKeys = @()
+foreach ($key in $usedKeys) {
+    $occurrences = ([regex]::Matches($localizerText, [regex]::Escape('["' + $key + '"]'))).Count
+    if ($occurrences -ne 2) { $missingKeys += "$key ($occurrences of 2)" }
+}
+
+if ($missingKeys.Count -gt 0) {
+    Write-Host 'Localisation keys are not defined in both language tables:' -ForegroundColor Red
+    $missingKeys | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    Write-Host 'A missing key is DISPLAYED as the key itself, so fix this before publishing.' -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "Localisation: all $($usedKeys.Count) ViewModel keys present in zh and en." -ForegroundColor Green
+
 # A running instance holds a lock on the .exe and makes the publish fail with a confusing error.
 $running = Get-Process -Name 'MultiBT.App' -ErrorAction SilentlyContinue
 if ($running) {
