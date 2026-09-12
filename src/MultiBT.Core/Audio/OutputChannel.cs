@@ -49,6 +49,17 @@ namespace MultiBT.Core.Audio;
 public sealed class OutputChannel : IAsyncDisposable
 {
     private readonly BufferedWaveProvider _ring;
+
+    /// <summary>
+    /// Per-channel gain for device positioning, or null when this device is not stereo.
+    /// </summary>
+    /// <remarks>
+    /// Null for a multichannel device rather than a throw: the provider refuses non-stereo by design, and a
+    /// chain that throws would stop the device opening at all. The cost is that positioning does not pan such
+    /// a device, which is honest — it has more channels than a left/right pair, and placing it is a different
+    /// problem from placing a speaker.
+    /// </remarks>
+    private StereoSpatialGainProvider? _spatial;
     private readonly RingDiagnostics _ringDiagnostics;
     private readonly AdaptiveResampler _resampler;
     private readonly DelaySampleProvider _delay;
@@ -234,7 +245,22 @@ public sealed class OutputChannel : IAsyncDisposable
         // Recorded so the start-up ramp knows where to land. The chain stays at 0 until Start().
         _targetGain = Math.Clamp(gain, 0.0, 1.0);
 
-        _meter = new MeteringSampleProvider(_volume);
+        // Spatial gain sits HERE: after the volume stage and before the meter.
+        //
+        //   after the probe  -> the probe above still measures the signal BEFORE any gain, so an
+        //                       intentionally silent channel still reports whether audio is flowing;
+        //   before the meter -> the level the UI shows is what is actually played.
+        //
+        // Only for stereo. Skipped otherwise, see the field remarks.
+        ISampleProvider beforeMeter = _volume;
+
+        if (_chainChannels == 2)
+        {
+            _spatial = new StereoSpatialGainProvider(_volume);
+            beforeMeter = _spatial;
+        }
+
+        _meter = new MeteringSampleProvider(beforeMeter);
 
         // Fan the meter out to our own event so subscribers cannot be leaked by an empty
         // remove accessor, and so the meter's own event signature stays internal.
@@ -252,6 +278,19 @@ public sealed class OutputChannel : IAsyncDisposable
 
     /// <summary>The endpoint's negotiated mix format.</summary>
     public WaveFormat DeviceMixFormat { get; }
+
+    /// <summary>Whether this device can be placed in space, i.e. it is a stereo output.</summary>
+    public bool SupportsSpatialGain => _spatial is not null;
+
+    /// <summary>
+    /// Applies the per-channel gains for this device's position.
+    /// </summary>
+    /// <remarks>
+    /// A no-op on a device that is not stereo, so callers can hand every channel the same placement without
+    /// having to ask first. That is deliberate: a caller that has to remember which devices can be panned
+    /// will eventually forget.
+    /// </remarks>
+    public void SetSpatialGains(double left, double right) => _spatial?.SetGains(left, right);
 
     /// <summary>Non-null when the player could not be built exactly as requested (e.g. raw mode unavailable).</summary>
     public string? InitializationNote { get; }
