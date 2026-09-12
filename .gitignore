@@ -32,3 +32,16 @@ desktop.ini
 ## Runtime config (never commit user profiles / calibration data)
 profiles.json
 profiles.corrupt-*.json
+
+## Vendored kernel driver (driver/)
+## Build outputs from the WDK toolchain; reproducible via driver/build.bat.
+driver/x64/
+driver/ARM64/
+driver/**/x64/
+driver/**/ARM64/
+driver/**/*.sys
+driver/**/*.cat
+driver/**/*.inf
+driver/**/*.cer
+driver/**/*.pvk
+driver/**/*.pfx
