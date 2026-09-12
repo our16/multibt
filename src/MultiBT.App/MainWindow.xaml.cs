@@ -179,6 +179,31 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Opens the download page for the recommended free virtual cable.
+    /// </summary>
+    /// <remarks>
+    /// MultiBT deliberately does not ship its own audio driver (see docs/DECISIONS.md): signing one for
+    /// user machines needs an EV certificate, and a cable is a one-time free install that solves the same
+    /// problem. That makes "go get one" a step on the critical path, so it should be one click rather
+    /// than a name the user has to search for.
+    /// </remarks>
+    private void OnGetVirtualCable(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "https://vb-audio.com/Cable/",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "MultiBT", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private void OnCaptureSinkChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_initialising || SinkBox.SelectedItem is not ComboBoxItem item)

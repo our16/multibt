@@ -127,6 +127,9 @@
                     <ComboBox x:Name="SinkBox" Width="210" VerticalAlignment="Center"
                               SelectionChanged="OnCaptureSinkChanged"
                               ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Tip]}" />
+                    <Button Padding="8,3" Margin="6,0,0,0" Click="OnGetVirtualCable"
+                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable]}"
+                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable.Tip]}" />
                 </StackPanel>
 
                 <ListBox Grid.Row="1" x:Name="DeviceList" BorderThickness="0"
