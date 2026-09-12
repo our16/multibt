@@ -9,7 +9,7 @@
         Title="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.WindowTitle]}"
         Icon="/Assets/multibt.ico"
         Height="680" Width="960"
-        MinHeight="560" MinWidth="860"
+        MinHeight="580" MinWidth="940"
         Background="#F4F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI"
         TextOptions.TextFormattingMode="Display"
@@ -214,10 +214,13 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <!-- toolbar: one row, fixed height, fixed-width controls -->
+                <!--
+                  toolbar: every control is Auto-sized and the ONLY star column is an empty spacer.
+                  That is what makes overlap impossible: a fixed-width control in the star column collapsed
+                  to zero width when the row ran out of room and was drawn over the button after it.
+                -->
                 <Grid Grid.Row="0" Height="32" Margin="0,0,0,10">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
@@ -230,32 +233,28 @@
 
                     <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
                                Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Label]}" />
-                    <ComboBox Grid.Column="1" x:Name="SinkBox" Width="250" VerticalAlignment="Center"
+                    <ComboBox Grid.Column="1" x:Name="SinkBox" Width="230" VerticalAlignment="Center"
                               SelectionChanged="OnCaptureSinkChanged"
                               ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Tip]}" />
 
-                    <TextBlock Grid.Column="2" Style="{StaticResource FieldLabel}" Margin="14,0,6,0"
-                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.LatencyPreset]}" />
-                    <ComboBox Grid.Column="3" x:Name="LatencyPresetBox" Width="80" VerticalAlignment="Center"
-                              SelectionChanged="OnLatencyPresetChanged" />
-
-                    <TextBlock Grid.Column="4" Style="{StaticResource FieldLabel}" Margin="14,0,6,0"
+                    <TextBlock Grid.Column="2" Style="{StaticResource FieldLabel}" Margin="16,0,6,0"
                                Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.SyncMode]}" />
-                    <ComboBox Grid.Column="5" x:Name="SyncModeBox" Width="150" HorizontalAlignment="Left"
-                              VerticalAlignment="Center" SelectionChanged="OnSyncModeChanged" />
+                    <ComboBox Grid.Column="3" x:Name="SyncModeBox" Width="134" VerticalAlignment="Center"
+                              SelectionChanged="OnSyncModeChanged" />
 
-                    <Button Grid.Column="6" Style="{StaticResource BaseButton}" Margin="0,0,6,0"
+                    <Button Grid.Column="5" Style="{StaticResource BaseButton}" Margin="0,0,6,0"
                             Click="OnRefreshDevices"
                             Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Refresh]}"
                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Refresh.Tip]}" />
-                    <Button Grid.Column="7" Style="{StaticResource BaseButton}" Margin="0,0,6,0"
+                    <Button Grid.Column="6" Style="{StaticResource BaseButton}" Margin="0,0,6,0"
                             Click="OnAutoMatchLevels"
                             Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.AutoMatch]}"
                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.AutoMatch.Tip]}" />
-                    <Button Grid.Column="8" Style="{StaticResource BaseButton}"
+                    <Button Grid.Column="7" Style="{StaticResource BaseButton}"
                             Click="OnGetVirtualCable"
                             Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable]}"
-                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable.Tip]}" />                </Grid>
+                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable.Tip]}" />
+                </Grid>
 
                 <ListBox Grid.Row="1" x:Name="DeviceList" BorderThickness="0" Background="Transparent"
                          ItemsSource="{Binding Devices}"

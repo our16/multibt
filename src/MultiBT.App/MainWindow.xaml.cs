@@ -38,12 +38,6 @@ public partial class MainWindow : Window
 
         _initialising = true;
 
-        foreach (int preset in EngineTunables.LatencyPresetsMs)
-        {
-            _ = LatencyPresetBox.Items.Add(preset);
-        }
-
-        LatencyPresetBox.SelectedItem = _viewModel.EngineLatencyMs;
 
         RebuildSyncModeItems();
         RebuildLanguageItems();
@@ -283,15 +277,6 @@ public partial class MainWindow : Window
 
     private void OnAutoMatchLevels(object sender, RoutedEventArgs e) => _viewModel.AutoMatchLevels();
 
-    private void OnLatencyPresetChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_initialising || LatencyPresetBox.SelectedItem is not int preset)
-        {
-            return;
-        }
-
-        _viewModel.EngineLatencyMs = preset;
-    }
 
     private void OnSyncModeChanged(object sender, SelectionChangedEventArgs e)
     {

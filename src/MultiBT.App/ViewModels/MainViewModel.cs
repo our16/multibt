@@ -617,13 +617,60 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     public bool IsNotRunning => !_isRunning;
 
+    /// <summary>A cheap fingerprint of the current endpoint set, used to notice device changes.</summary>
+    /// <remarks>
+    /// Watching the set itself rather than draining DeviceManager's notification queue: that queue is raised
+    /// through DrainPendingChanges, which the ENGINE drains, so a second consumer would race it and whichever
+    /// ran first would starve the other. Comparing a signature interferes with nothing and cannot miss a
+    /// change.
+    /// </remarks>
+    private string DescribeEndpointSet() =>
+        string.Join(
+            '|',
+            _devices.EnumerateRenderEndpoints(includeInactive: true)
+                .Select(e => $"{e.EndpointId}:{(e.IsActive ? 1 : 0)}"));
+
+    /// <summary>The endpoint fingerprint as of the last refresh.</summary>
+    private string? _lastEndpointSignature;
+
+    /// <summary>Diagnostics ticks since the last device-set check (one tick is 500 ms).</summary>
+    private int _deviceWatchTicks;
+
+    /// <summary>
+    /// Rebuilds the device list when the set of endpoints has changed underneath us.
+    /// </summary>
+    /// <remarks>
+    /// Without this a Bluetooth speaker that reconnects does not appear until the user presses refresh: the
+    /// ViewModel simply never looked again.
+    /// </remarks>
+    private void RefreshDevicesIfChanged()
+    {
+        string signature = DescribeEndpointSet();
+
+        if (string.Equals(signature, _lastEndpointSignature, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        RefreshDevices();
+    }
+
     /// <summary>Re-enumerates endpoints and joins them to stored profiles.</summary>
     public void RefreshDevices()
     {
+        _lastEndpointSignature = DescribeEndpointSet();
+
         // Device notifications are the realistic trigger for Windows moving the default output (a Bluetooth
         // speaker reconnecting does it routinely), so this is where the notice gets re-checked against
         // reality rather than left stating stale advice.
         RaiseNotice();
+
+        // A device that has just come back and is still ticked needs its channel again, or it stays silent
+        // until the user toggles it by hand.
+        if (_engine is not null)
+        {
+            _ = ReconcileChannelsAsync();
+        }
 
         // Preserve the primary across the rebuild.
         //
@@ -748,10 +795,31 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// the endpoint Windows is actually playing to, there is nothing to capture and every output
     /// stays silent while looking perfectly healthy.
     /// </remarks>
+    /// <summary>
+    /// The endpoint the mirror will actually capture from, without touching any hardware.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors ResolveSourceDevice's priority, which it has to: the warning below is about whether the
+    /// captured endpoint receives audio, and comparing the PRIMARY device was wrong whenever the user had
+    /// explicitly chosen a different input.
+    /// </remarks>
+    private string? ResolvedSourceEndpointId =>
+        !string.IsNullOrEmpty(_settings.Engine.CaptureSinkDeviceId)
+            ? _settings.Engine.CaptureSinkDeviceId
+            : _primaryDevice?.Endpoint.EndpointId
+              ?? _settings.Engine.SourceDeviceId;
+
+    /// <summary>
+    /// Whether the endpoint being captured is NOT the one Windows renders into.
+    /// </summary>
+    /// <remarks>
+    /// This is the single condition that explains "the mirror runs and nothing is audible": loopback carries
+    /// what the source endpoint is rendering, so a source that is not the default output captures silence.
+    /// </remarks>
     public bool CaptureSourceIsNotDefault =>
-        _primaryDevice is not null
+        !string.IsNullOrEmpty(ResolvedSourceEndpointId)
         && !string.IsNullOrEmpty(_defaultRenderEndpointId)
-        && !string.Equals(_primaryDevice.Endpoint.EndpointId, _defaultRenderEndpointId, StringComparison.OrdinalIgnoreCase);
+        && !string.Equals(ResolvedSourceEndpointId, _defaultRenderEndpointId, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Actionable warning for the UI, or null when the capture source is correct.</summary>
     public string? CaptureSourceWarning => CaptureSourceIsNotDefault
@@ -1797,8 +1865,37 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         return _devices.TryGetDefaultRenderDevice(out source) && source is not null;
     }
 
+    /// <summary>
+    /// Re-attaches enabled devices that have no channel.
+    /// </summary>
+    private async Task ReconcileChannelsAsync()
+    {
+        if (_engine is null)
+        {
+            return;
+        }
+
+        foreach (DeviceViewModel device in Devices.Where(d => d.IsEnabled).ToList())
+        {
+            if (_engine.Channels.Any(c => c.DeviceKey == device.Key))
+            {
+                continue;
+            }
+
+            await AddChannelToEngineAsync(device).ConfigureAwait(true);
+        }
+    }
+
     private void RefreshDiagnostics()
     {
+        // Watch for devices appearing and disappearing. Every 4th tick, so the endpoint enumeration does not
+        // run at the full 500 ms rate.
+        if (++_deviceWatchTicks >= 4)
+        {
+            _deviceWatchTicks = 0;
+            RefreshDevicesIfChanged();
+        }
+
         if (_engine is null)
         {
             return;
