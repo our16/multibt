@@ -998,6 +998,54 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         return applied;
     }
 
+    /// <summary>
+    /// Pushes every device's configured position to its channel.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Positions come from the saved settings, so an unplaced device yields unity gain and zero delay and this
+    /// method changes nothing about it. That is what makes the feature safe to leave switched on: a set-up that
+    /// has never touched it behaves exactly as it did before.
+    /// </para>
+    /// <para>
+    /// Only ENABLED devices take part, matching the rest of the app: a ticked-out device is not in the mirror,
+    /// so it must not influence the alignment of the ones that are. In particular it must not drag the
+    /// reference distance, which the distance delay is measured against.
+    /// </para>
+    /// </remarks>
+    public void ApplySpatialPlacements()
+    {
+        if (_engine is null)
+        {
+            return;
+        }
+
+        var positions = new Dictionary<string, MultiBT.Core.Sync.DevicePosition>(StringComparer.Ordinal);
+
+        foreach (DeviceViewModel device in Devices.Where(d => d.IsEnabled && d.Profile.Spatial.IsConfigured))
+        {
+            positions[device.Key] = device.Profile.Spatial.ToPosition();
+        }
+
+        IReadOnlyDictionary<string, MultiBT.Core.Sync.SpatialPlacement> placements =
+            MultiBT.Core.Sync.SpatialMixer.ComputePlacements(positions);
+
+        foreach (OutputChannel channel in _engine.Channels)
+        {
+            if (placements.TryGetValue(channel.DeviceKey, out MultiBT.Core.Sync.SpatialPlacement placement))
+            {
+                channel.SetSpatialGains(placement.LeftGain, placement.RightGain);
+                channel.SetSpatialDelayMs(placement.DelayMs);
+            }
+            else
+            {
+                // Not placed: back to unity, so removing a position takes effect immediately.
+                channel.SetSpatialGains(1.0, 1.0);
+                channel.SetSpatialDelayMs(0.0);
+            }
+        }
+    }
+
     /// <summary>Persists settings atomically.</summary>
     public void SaveSettings()
     {
@@ -1560,6 +1608,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             // Channels are constructed at unity gain, so the stored master volume has to be applied now or
             // it would only take effect the next time the slider moves.
             ApplyGainsToEngine();
+
+            // Same reasoning for positions: a channel starts centred and undelayed, so the saved placement has
+            // to be pushed to it or the device would only be placed the next time someone edited it.
+            ApplySpatialPlacements();
 
             StatusText = Localizer.Instance.Format("Status.Mirroring", engine.Channels.Count, _settings.Engine.EngineLatencyMs);
         }
