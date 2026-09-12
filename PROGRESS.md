@@ -827,6 +827,51 @@ DriverStore 中最新音频驱动包：2025/11/26（VoiceMeeter VAIO，包还在
 
 ---
 
+## ✅ 已实测：loopback 捕获是 **PRE-volume**（端点音量不影响我们捕获到什么）
+
+装好 VB-CABLE 后用 `tools/LoopbackVolumeProbe` 对着 **CABLE Input** 实测
+（对虚拟声卡测量意味着**完全没有声音**，只有在 cable 上才能这么做）：
+
+```text
+volume 100%            wrote  100% -> read  100% muted=False peak    -34.0 dBFS
+volume  50%            wrote   50% -> read   50% muted=False peak    -34.0 dBFS
+volume  25%            wrote   25% -> read   25% muted=False peak    -34.0 dBFS
+volume   0%            wrote    0% -> read    0% muted=False peak    -34.0 dBFS
+volume 100% again      wrote  100% -> read  100% muted=False peak    -34.0 dBFS
+muted (volume 100%)    wrote  100% -> read  100% muted=True  peak    -34.0 dBFS
+```
+
+每一次都**先读回确认写入生效**，并且用 **peak 电平**（不是 RMS、不是静音比例）比较，
+0% 前后各测一次 100% 作为对照。结论明确：
+
+**峰值在所有音量下完全相同，连 mute 都照收 -34 dBFS → 捕获发生在端点音量之前。**
+
+三个直接推论：
+
+1. **好消息：不会因为声卡被静音或音量拉低就饿死整条镜像。** 之前担心过的
+   「cable 被 mute → 所有输出一起没声音」不成立；
+2. **好消息：被捕获的真实设备可以同时被我们控制。** 我们写它的端点音量不会反过来改变捕获内容，
+   所以它既能原生播放（音量受我们控制）又能作为输入；
+3. ⚠️ **代价：在声卡模式下，键盘音量键会失效。** 因为 Windows 默认输出是 cable，
+   音量键调的是 **cable 的**音量，而捕获是 pre-volume —— 所以按了没反应。
+
+> 💡 第 3 条有一个顺理成章的修法（**尚未实现，也未要求**）：读取捕获端点的音量，
+> 把它当作一路 master gain 施加到所有输出上。这样音量键就重新生效了，
+> 因为音量键动的正是这个值。等需要时再讨论。
+
+### 顺带修掉工具自身两个 bug（都是「看起来在工作但测不到东西」那类）
+
+- **`--device` 参数被 `--nologo` 挤掉**：`dotnet run` 把无法识别的 `--nologo` 当应用参数传了下去，
+  而我原来只检查 `args[0]`。结果它在**默认设备上**跑，还打印了默认设备——
+  如果没有把收到的参数打出来，这个错误会一直被当成「测的就是 cable」。现在参数先解析并打印；
+- **`Extensible` 格式被当成非浮点**：捕获格式是 `WAVE_FORMAT_EXTENSIBLE` 包着 32-bit float
+  （显示为 `Extensible` 而不是 `IeeeFloat`），原来的判断会让 `PeakAccumulator` 两个分支都不进，
+  **永远报 -inf dBFS（静音）**。这种「工具永远说没声音」的失败模式比崩溃更危险。
+  同时 NAudio 的 `SampleToWaveProvider` 拒绝 Extensible，tone 改为按引擎的做法
+  生成普通 `IeeeFloat`（引擎自己就是这么做的）。
+
+---
+
 ## 里程碑
 
 | 里程碑 | 内容 | 状态 |
