@@ -122,6 +122,7 @@ internal static class Program
 
         int runSeconds = DefaultRunSeconds;
         string? sourceSelector = null;
+        var positionSpecs = new List<(string Match, MultiBT.Core.Sync.DevicePosition Position)>();
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -132,6 +133,31 @@ internal static class Program
             else if (args[i] is "--source" && i + 1 < args.Length)
             {
                 sourceSelector = args[++i];
+            }
+            else if (args[i] is "--position" && i + 1 < args.Length)
+            {
+                // "<name substring>=<right>,<front>,<up>"
+                string spec = args[++i];
+                int eq = spec.IndexOf('=');
+
+                if (eq <= 0)
+                {
+                    Console.WriteLine($"FATAL: --position wants '<name>=<right>,<front>,<up>'; got '{spec}'.");
+                    return 1;
+                }
+
+                string[] parts = spec[(eq + 1)..].Split(',');
+
+                if (parts.Length != 3
+                    || !double.TryParse(parts[0], out double right)
+                    || !double.TryParse(parts[1], out double front)
+                    || !double.TryParse(parts[2], out double up))
+                {
+                    Console.WriteLine($"FATAL: --position wants three comma-separated metres; got '{spec}'.");
+                    return 1;
+                }
+
+                positionSpecs.Add((spec[..eq], new MultiBT.Core.Sync.DevicePosition(right, front, up)));
             }
         }
 
@@ -271,6 +297,18 @@ internal static class Program
 
             MMDevice? targetDevice = null;
 
+            // Resolved ONCE for all channels, before any is built: the distance delay is relative to the
+            // NEAREST device, so a placement computed device-by-device as the loop ran would give whichever
+            // device happened to be first a different reference from the rest.
+            IReadOnlyDictionary<string, MultiBT.Core.Sync.SpatialPlacement> channelPlacements =
+                MultiBT.Core.Sync.SpatialMixer.ComputePlacements(
+                    targets
+                        .SelectMany(t => positionSpecs
+                            .Where(s => t.FriendlyName.Contains(s.Match, StringComparison.OrdinalIgnoreCase))
+                            .Select(s => (t.EndpointId, s.Position)))
+                        .GroupBy(p => p.EndpointId)
+                        .ToDictionary(g => g.Key, g => g.First().Position, StringComparer.Ordinal));
+
             try
             {
                 targetDevice = Resolve(devices, target.EndpointId);
@@ -302,6 +340,15 @@ internal static class Program
 
                 // Sampled immediately: the ramp must begin from silence.
                 double gainAtStart = channel.CurrentGain;
+
+                if (channelPlacements.TryGetValue(target.EndpointId, out MultiBT.Core.Sync.SpatialPlacement placement))
+                {
+                    channel.SetSpatialGains(placement.LeftGain, placement.RightGain);
+                    channel.SetSpatialDelayMs(placement.DelayMs);
+
+                    Console.WriteLine($"     position applied: L={placement.LeftGain:0.###} R={placement.RightGain:0.###} "
+                                      + $"distance delay={placement.DelayMs:0.##} ms");
+                }
 
                 channels.Add((channel, targetDevice, target.FriendlyName, target.EndpointId, gainAtStart));
                 targetDevice = null;   // ownership transferred to the channel
@@ -470,6 +517,18 @@ internal static class Program
                                   + $"appliedDelay={d.AppliedDelayMs:0.#} ms  grantedLat={d.EngineLatencyMs} ms");
                 Console.WriteLine($"     endpoint volume={(double.IsNaN(d.EndpointVolumeScalar) ? "n/a" : $"{d.EndpointVolumeScalar * 100:0}%")}"
                                   + $"  muted={d.EndpointMuted}");
+                // Left and right separately: this is the evidence that positioning works, and the one thing the
+                // aggregate level cannot show, since both pan directions give the same total.
+                double? left = channels[i].Channel.LeftPeak;
+                double? right = channels[i].Channel.RightPeak;
+
+                Console.WriteLine(left is null || right is null
+                    ? "     channels: not stereo, so panning cannot be measured or applied"
+                    : $"     channels: L={Dbfs(left.Value)}  R={Dbfs(right.Value)}"
+                      + (left.Value > 0.000001 && right.Value > 0.000001
+                          ? $"  L/R ratio={(left.Value / right.Value):0.000}"
+                          : string.Empty));
+
                 Console.WriteLine($"     player state={Describe(channels[i].Channel)}");
                 Console.WriteLine($"     start-up ramp: gain at Start = {channels[i].GainAtStart:0.######} "
                                   + $"(target {RampProbeGain:0.###}) -> now {channels[i].Channel.CurrentGain:0.######}");
@@ -603,6 +662,10 @@ internal static class Program
 
         return failures == 0 ? 0 : 1;
     }
+
+    /// <summary>A linear peak as dBFS, with silence reported as -inf rather than as a large negative number.</summary>
+    private static string Dbfs(double linear) =>
+        linear <= 0.0 ? "-inf dBFS" : $"{20.0 * Math.Log10(linear):0.0} dBFS";
 
     private static MMDevice Resolve(DeviceManager devices, string endpointId) =>
         devices.TryResolveDevice(endpointId, out MMDevice? device) && device is not null
