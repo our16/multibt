@@ -60,6 +60,9 @@ public sealed class OutputChannel : IAsyncDisposable
     /// problem from placing a speaker.
     /// </remarks>
     private StereoSpatialGainProvider? _spatial;
+
+    /// <summary>Peaks of what is actually played, i.e. after the gain stages. Null when not stereo.</summary>
+    private readonly SignalProbe? _outputProbe;
     private readonly RingDiagnostics _ringDiagnostics;
     private readonly AdaptiveResampler _resampler;
     private readonly DelaySampleProvider _delay;
@@ -278,6 +281,14 @@ public sealed class OutputChannel : IAsyncDisposable
         {
             _spatial = new StereoSpatialGainProvider(_volume);
             beforeMeter = _spatial;
+
+            // A SECOND probe, downstream of the gain stages.
+            //
+            // The first probe deliberately sits BEFORE them, so that an intentionally silenced channel still
+            // reports whether audio is flowing. That is precisely why it cannot show what the spatial gain
+            // did, and measuring the pan needs a tap after it.
+            _outputProbe = new SignalProbe(beforeMeter);
+            beforeMeter = _outputProbe;
         }
 
         _meter = new MeteringSampleProvider(beforeMeter);
@@ -317,10 +328,10 @@ public sealed class OutputChannel : IAsyncDisposable
     /// Exposed so a test can tell a correctly panned device from one panned the wrong way round. The
     /// aggregate level cannot: both directions produce the same total.
     /// </remarks>
-    public double? LeftPeak => _signalProbe.LeftPeak;
+    public double? LeftPeak => _outputProbe?.LeftPeak;
 
     /// <summary>Peak of the right channel, or null when this device is not stereo.</summary>
-    public double? RightPeak => _signalProbe.RightPeak;
+    public double? RightPeak => _outputProbe?.RightPeak;
 
     /// <summary>Non-null when the player could not be built exactly as requested (e.g. raw mode unavailable).</summary>
     public string? InitializationNote { get; }
