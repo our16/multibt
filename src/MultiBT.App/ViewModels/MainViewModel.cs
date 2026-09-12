@@ -108,6 +108,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>The notice last announced, so an unchanged one is not announced again.</summary>
     private string? _lastNotice;
+
+    /// <summary>Group-fader offset since the current drag began. Zero at rest.</summary>
+    private double _lastNudge;
     private bool _isRunning;
     private bool _isPaused;
     private double _systemLatencyMs;
@@ -913,35 +916,87 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     /// <summary>
-    /// Whole-mirror volume, 0..1, applied on top of every device's own volume.
+    /// Group fader position, as an offset from where the drag started.
     /// </summary>
     /// <remarks>
-    /// Applies to every device that is part of the mirror, which is exactly the set the user has ticked.
-    /// It does not touch any device's Windows volume, so it can always be returned to 100 %.
+    /// This is a MOMENTARY control, not a stored level: each movement pushes every ticked device's volume by
+    /// the same amount, and it returns to zero when the drag ends because the devices themselves now hold the
+    /// result. It has no range of its own -- the travel available is whatever the devices allow, and it is
+    /// asymmetric when they sit at different levels.
     /// </remarks>
-    public double MasterVolume
+    public double MasterNudge
     {
-        get => _settings.Engine.MasterVolume;
+        get => _lastNudge;
         set
         {
-            double clamped = Math.Clamp(value, 0.0, 1.0);
+            double increment = value - _lastNudge;
 
-            if (Math.Abs(_settings.Engine.MasterVolume - clamped) < 0.0001)
+            if (Math.Abs(increment) < 0.0001)
             {
                 return;
             }
 
-            _settings.Engine.MasterVolume = clamped;
-            ApplyGainsToEngine();
+            double applied = NudgeAllVolumes(increment);
+            _lastNudge += applied;
 
-            OnPropertyChanged(nameof(MasterVolume));
-            OnPropertyChanged(nameof(MasterVolumePercent));
-            QueueSettingsSave();
+            // Notified even when the value was clamped, so the thumb is pushed back to the rail it has hit
+            // instead of drifting away from the levels it is driving.
+            OnPropertyChanged(nameof(MasterNudge));
+            OnPropertyChanged(nameof(MasterNudgeLabel));
         }
     }
 
-    /// <summary>The master volume as a percentage, for the label beside the slider.</summary>
-    public string MasterVolumePercent => $"{MasterVolume * 100:0}%";
+    /// <summary>The offset currently being applied, e.g. "+12%".</summary>
+    public string MasterNudgeLabel => string.Create(
+        System.Globalization.CultureInfo.InvariantCulture,
+        $"{_lastNudge * 100:+0;-0;0}%");
+
+    /// <summary>Ends a drag: the devices hold the result, so the fader returns to its rest position.</summary>
+    public void EndMasterNudge()
+    {
+        _lastNudge = 0.0;
+        OnPropertyChanged(nameof(MasterNudge));
+        OnPropertyChanged(nameof(MasterNudgeLabel));
+    }
+
+    /// <summary>
+    /// Pushes every ticked device's volume by the same amount, stopping at the first device to hit a rail.
+    /// </summary>
+    /// <remarks>
+    /// The limit is the whole point: pushing past it would either clip a device at 100 % or silently park one
+    /// at 0 %, and both destroy the balance the group fader exists to preserve. Devices whose volume cannot
+    /// be read are excluded from the limit rather than treated as 0, which would otherwise pin the whole group
+    /// in place.
+    /// </remarks>
+    /// <returns>The offset actually applied, which is the requested one unless a device hit a rail.</returns>
+    private double NudgeAllVolumes(double delta)
+    {
+        List<DeviceViewModel> involved = Devices
+            .Where(d => d.IsEnabled && !double.IsNaN(d.EndpointVolume))
+            .ToList();
+
+        if (involved.Count == 0)
+        {
+            return 0.0;
+        }
+
+        double headroom = involved.Min(d => 1.0 - d.EndpointVolume);
+        double floor = involved.Min(d => d.EndpointVolume);
+        double applied = Math.Clamp(delta, -floor, headroom);
+
+        if (Math.Abs(applied) < 0.0001)
+        {
+            return 0.0;
+        }
+
+        foreach (DeviceViewModel device in involved)
+        {
+            device.EndpointVolume = Math.Clamp(device.EndpointVolume + applied, 0.0, 1.0);
+            QueueEndpointVolumeWrite(device);
+        }
+
+        return applied;
+    }
 
     /// <summary>Persists settings atomically.</summary>
     public void SaveSettings()
@@ -1073,7 +1128,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 // Chain gain, not the device volume: pausing mutes the whole mirror without touching
                 // the user's Windows volume settings, so resuming restores exactly what was there. The
                 // master volume rides on the same multiplier, so resuming keeps the level the user set.
-                channel.SetGain(paused ? 0f : (float)MasterVolume);
+                channel.SetGain(paused ? 0f : 1f);
             }
         }
 
@@ -1577,7 +1632,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        float chainGain = IsPaused ? 0f : (float)MasterVolume;
+        float chainGain = IsPaused ? 0f : 1f;
 
         foreach (OutputChannel channel in _engine.Channels)
         {

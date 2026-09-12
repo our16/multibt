@@ -548,11 +548,17 @@
             -->
             <TextBlock Grid.Column="2" Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
                        Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Master.Label]}" />
-            <Slider Grid.Column="3" Width="150" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
-                    Value="{Binding MasterVolume, Mode=TwoWay}" VerticalAlignment="Center"
+            <!--
+              A momentary push: it returns to the centre when released, because the devices now hold the
+              result. It stops moving when any device reaches 0 % or 100 %, which is why its travel is not
+              a fixed range.
+            -->
+            <Slider Grid.Column="3" Width="150" Minimum="-1" Maximum="1" SmallChange="0.01" LargeChange="0.1"
+                    Value="{Binding MasterNudge, Mode=TwoWay}" VerticalAlignment="Center"
+                    Thumb.DragCompleted="OnMasterNudgeCompleted"
                     ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Master.Tip]}" />
             <TextBlock Grid.Column="4" Style="{StaticResource ValueText}" Width="44" Margin="6,0,12,0"
-                       Text="{Binding MasterVolumePercent}" />
+                       Text="{Binding MasterNudgeLabel}" />
 
             <Button Grid.Column="5" Style="{StaticResource BaseButton}" MinWidth="96"
                     Click="OnSave"

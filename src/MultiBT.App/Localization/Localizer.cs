@@ -120,7 +120,7 @@ public sealed class Localizer : INotifyPropertyChanged
 
         // per-device volume
         ["Master.Label"] = "总音量",
-        ["Master.Tip"] = "一次性调整所有已勾选设备。它是在各设备自身音量之上的一路增益，所以不会打乱你调好的相对平衡，拉回 100% 即完全还原。",
+        ["Master.Tip"] = "把所有已勾选设备的音量一起往前或往后推。任何一台到达 0% 或 100% 就推不动了，所以你调好的相对平衡不会被破坏。松开后推杆回到中间，音量留在设备上。",
         ["Volume.Label"] = "设备音量",
         ["Volume.Tip"] = "该设备在 Windows 中的实际输出音量。拖动即时生效。",
         ["Volume.Display"] = "设备音量 {0}%",
@@ -282,7 +282,7 @@ public sealed class Localizer : INotifyPropertyChanged
         ["Primary.Tip"] = "Make this the primary (capture source) and switch the Windows default output to match",
 
         ["Master.Label"] = "Master",
-        ["Master.Tip"] = "Adjusts every ticked device at once. It is a gain on top of each device's own volume, so it does not disturb the balance you set, and returning to 100 % restores it exactly.",
+        ["Master.Tip"] = "Pushes every ticked device's volume forward or back together. It stops as soon as any one of them reaches 0 % or 100 %, so the balance you set is preserved. The fader returns to the centre when released; the levels stay on the devices.",
         ["Volume.Label"] = "Device volume",
         ["Volume.Tip"] = "This device's actual Windows output volume. Applies immediately while dragging.",
         ["Volume.Display"] = "Device volume {0}%",

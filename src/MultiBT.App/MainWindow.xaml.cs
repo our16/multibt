@@ -274,6 +274,9 @@ public partial class MainWindow : Window
     /// Clipboard access can fail -- another process can hold the clipboard open -- and that must not take the
     /// application down over a copy button.
     /// </remarks>
+    /// <summary>Group fader released: the device volumes hold the result, so the fader returns to rest.</summary>
+    private void OnMasterNudgeCompleted(object sender, RoutedEventArgs e) => _viewModel.EndMasterNudge();
+
     private void OnCopyNotice(object sender, RoutedEventArgs e)
     {
         string? text = _viewModel.NoticeText;
