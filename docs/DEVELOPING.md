@@ -195,5 +195,5 @@ tools/
 都发生在你和厂商之间 —— VB-Audio 的许可本身也不允许转发它的安装包。详见
 [docs/DECISIONS.md](docs/DECISIONS.md) 的 ADR-001 与 ADR-003。
 
-> ⚠️ 本项目**没有**借用 `README.md` 上方致谢列表中那些项目的代码：它们只是设计思路的来源。
+> ⚠️ 本项目**没有**借用下方致谢列表中那些项目的代码：它们只是设计思路的来源。
 > 特别是 `double-headphones`（Proprietary，未发布源码）**只参考了产品行为，没有参考其代码**。
