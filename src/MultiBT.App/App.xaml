@@ -1,0 +1,16 @@
+<Application x:Class="MultiBT.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:MultiBT.App"
+             ShutdownMode="OnExplicitShutdown">
+    <!--
+      No StartupUri, and ShutdownMode is OnExplicitShutdown.
+
+      Both are load-bearing. The window is created in App.OnStartup AFTER the single-instance
+      check, so a second launch can exit without ever building a window or an audio engine.
+      And because the tray icon is the primary UI (docs/GOALS.md G6), closing the main window
+      must NOT end the process — only the tray's Exit command does.
+    -->
+    <Application.Resources>
+    </Application.Resources>
+</Application>

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <!-- Same Windows version floor as Core: the Bluetooth connector needs Windows 11 24H2
+         semantics and the WinRT projections the floor unlocks. See docs/PITFALLS.md A1. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <RootNamespace>MultiBT.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
+    <ProjectReference Include="..\MultiBT.Core\MultiBT.Core.csproj" />
+  </ItemGroup>
+
+  <!--
+    Deliberately NO MVVM toolkit dependency. The view models here are small enough that a
+    hand-rolled ObservableObject is less risk than another package version to keep in step.
+    Add CommunityToolkit.Mvvm only when the view-model count justifies it.
+  -->
+
+</Project>

@@ -1,0 +1,23 @@
+# Normalise line endings so the repo does not churn depending on which tool
+# wrote a file. Without this, git reports "LF will be replaced by CRLF" on every
+# add and mixed endings accumulate across editors and agents.
+* text=auto
+
+*.cs        text diff=csharp
+*.xaml      text
+*.csproj    text
+*.props     text
+*.slnx      text
+*.md        text
+*.ps1       text
+*.json      text
+*.gitignore text
+*.gitattributes text
+
+# Windows-only binaries that must never be line-ending converted.
+*.exe   binary
+*.dll   binary
+*.pdb   binary
+*.zip   binary
+*.png   binary
+*.ico   binary

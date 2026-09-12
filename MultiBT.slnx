@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MultiBT.App/MultiBT.App.csproj" />
+    <Project Path="src/MultiBT.Core/MultiBT.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MultiBT.Core.Tests/MultiBT.Core.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/ApiProbe/ApiProbe.csproj" />
+    <Project Path="tools/MirrorSelfTest/MirrorSelfTest.csproj" />
+    <Project Path="tools/SmokeCheck/SmokeCheck.csproj" />
+  </Folder>
+</Solution>

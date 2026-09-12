@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      MUST carry a -windows TFM suffix with a Windows version floor.
+      `net10.0` alone silently resolves NAudio's portable group and the whole WASAPI
+      stack disappears with no error and no warning (NAudio #1407). See docs/PITFALLS.md A1.
+    -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <RootNamespace>MultiBT.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="3.1.0" />
+  </ItemGroup>
+
+</Project>

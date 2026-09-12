@@ -1,0 +1,34 @@
+## Build outputs
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+.vs/
+
+## Published preview (191 MB exe + zip).
+## Reproducible with: pwsh -File publish-preview.ps1
+## Committing build artifacts of this size would bloat the repo permanently for no benefit.
+publish/
+
+## NuGet
+*.nupkg
+packages/
+!packages/build/
+
+## Test / coverage
+[Tt]est[Rr]esult*/
+coverage*.xml
+*.coverage
+
+## Local scratch
+.probe/
+
+## OS
+Thumbs.db
+desktop.ini
+
+## Runtime config (never commit user profiles / calibration data)
+profiles.json
+profiles.corrupt-*.json
