@@ -105,6 +105,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private DeviceViewModel? _primaryDevice;
     private string _statusText = string.Empty;
     private string? _settingsWarning;
+
+    /// <summary>The notice last announced, so an unchanged one is not announced again.</summary>
+    private string? _lastNotice;
     private bool _isRunning;
     private bool _isPaused;
     private double _systemLatencyMs;
@@ -249,9 +252,27 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Current UI language.</summary>
     public UiLanguage Language => _settings.Ui.Language;
 
-    /// <summary>Every render endpoint, offered as a possible input.</summary>
-    public IReadOnlyList<AudioEndpointInfo> CaptureSinkCandidates => VirtualCableDetector.OrderForSinkPicker(
-        _devices.EnumerateRenderEndpoints(includeInactive: true));
+    /// <summary>Render endpoints offered as inputs: the usable ones, plus the current choice.</summary>
+    /// <remarks>
+    /// A typical machine reports 21 render endpoints and only 4 that can carry audio; the rest are phantom
+    /// entries from unplugged HDMI outputs and duplicate driver copies of the same jack. Listing all of them
+    /// is not helpful — 17 impossible choices bury the ones that work.
+    ///
+    /// The selected endpoint is kept even when it is currently inactive, so the box can still show what is
+    /// chosen: dropping it would silently reset the selection to "auto".
+    /// </remarks>
+    public IReadOnlyList<AudioEndpointInfo> CaptureSinkCandidates
+    {
+        get
+        {
+            string? selectedId = _settings.Engine.CaptureSinkDeviceId;
+
+            return VirtualCableDetector.OrderForSinkPicker(
+                _devices.EnumerateRenderEndpoints(includeInactive: true)
+                    .Where(e => e.IsActive
+                        || string.Equals(e.EndpointId, selectedId, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
 
     /// <summary>The configured capture sink, or null when none is set.</summary>
     public string? CaptureSinkEndpointId => _settings.Engine.CaptureSinkDeviceId;
@@ -355,8 +376,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(CaptureSinkEndpointId));
         OnPropertyChanged(nameof(HasInputNote));
         OnPropertyChanged(nameof(InputNote));
-        OnPropertyChanged(nameof(NoticeText));
-        OnPropertyChanged(nameof(HasNotice));
+        RaiseNotice();
 
         if (_engine is not null)
         {
@@ -390,8 +410,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(SystemLatencySummary));
         OnPropertyChanged(nameof(CaptureSourceWarning));
         OnPropertyChanged(nameof(HasCaptureSourceWarning));
-        OnPropertyChanged(nameof(NoticeText));
-        OnPropertyChanged(nameof(HasNotice));
+        RaiseNotice();
         StatusText = Localizer.Instance["Status.Idle"];
     }
 
@@ -556,6 +575,28 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Whether <see cref="NoticeText"/> has something to say.</summary>
     public bool HasNotice => NoticeText is not null;
 
+    /// <summary>
+    /// Announces the notice, but only when it actually differs from what was last announced.
+    /// </summary>
+    /// <remarks>
+    /// The notice depends on state that changes outside this class — whether Windows currently renders into
+    /// the chosen input, which moves when the mirror starts or stops and can move on its own when a device
+    /// reconnects. Without re-checking it, the banner kept claiming the mirror would be silent long after
+    /// the routing had been fixed, which sends the user hunting for a problem that is not there.
+    /// </remarks>
+    private void RaiseNotice()
+    {
+        string? current = NoticeText;
+
+        if (string.Equals(current, _lastNotice, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastNotice = current;
+        RaiseNotice();
+    }
+
     public string DiagnosticsSummary
     {
         get => _diagnosticsSummary;
@@ -579,6 +620,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Re-enumerates endpoints and joins them to stored profiles.</summary>
     public void RefreshDevices()
     {
+        // Device notifications are the realistic trigger for Windows moving the default output (a Bluetooth
+        // speaker reconnecting does it routinely), so this is where the notice gets re-checked against
+        // reality rather than left stating stale advice.
+        RaiseNotice();
+
         // Preserve the primary across the rebuild.
         //
         // RefreshDevices REPLACES every DeviceViewModel, so the previous primary instance becomes
@@ -726,8 +772,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(CaptureSourceIsNotDefault));
         OnPropertyChanged(nameof(CaptureSourceWarning));
         OnPropertyChanged(nameof(HasCaptureSourceWarning));
-        OnPropertyChanged(nameof(NoticeText));
-        OnPropertyChanged(nameof(HasNotice));
+        RaiseNotice();
     }
 
     /// <summary>
@@ -1203,6 +1248,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         // mirror's lifetime makes "Windows renders into the cable" true exactly while MultiBT is running.
         string? routingFailure = EnsureWindowsRendersIntoSource(source);
 
+        // The switch above changes whether the notice is still true.
+        RaiseNotice();
+
         if (routingFailure is not null)
         {
             // Refuse rather than run: the mirror would be silent by construction, and reporting success
@@ -1359,12 +1407,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         if (!_restartingForSource)
         {
             RestoreDefaultOutput();
+
+            // Restoring the default can change whether the notice still applies.
+            RaiseNotice();
         }
 
         OnPropertyChanged(nameof(HasInputNote));
         OnPropertyChanged(nameof(InputNote));
-        OnPropertyChanged(nameof(NoticeText));
-        OnPropertyChanged(nameof(HasNotice));
+        RaiseNotice();
         DiagnosticsSummary = Localizer.Instance["Diagnostics.None"];
     }
 

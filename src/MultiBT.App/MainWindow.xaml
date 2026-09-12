@@ -255,8 +255,7 @@
                     <Button Grid.Column="8" Style="{StaticResource BaseButton}"
                             Click="OnGetVirtualCable"
                             Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable]}"
-                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable.Tip]}" />
-                </Grid>
+                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable.Tip]}" />                </Grid>
 
                 <ListBox Grid.Row="1" x:Name="DeviceList" BorderThickness="0" Background="Transparent"
                          ItemsSource="{Binding Devices}"

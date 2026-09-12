@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using MultiBT.App.Localization;
+using MultiBT.App.Recommendations;
 using MultiBT.App.ViewModels;
 using MultiBT.Core.Audio;
 using MultiBT.Core.Config;
@@ -211,13 +213,49 @@ public partial class MainWindow : Window
     /// problem. That makes "go get one" a step on the critical path, so it should be one click rather
     /// than a name the user has to search for.
     /// </remarks>
+    /// <summary>
+    /// Opens the recommended-devices menu, anchored under the button that raised it.
+    /// </summary>
+    /// <remarks>
+    /// A dropdown rather than a direct link, so the app can name a few products and state the real catch
+    /// with each instead of silently promoting one vendor. Nothing here installs anything: every entry
+    /// opens the vendor's own page, because MultiBT does not distribute drivers.
+    /// </remarks>
     private void OnGetVirtualCable(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = sender as UIElement, Placement = PlacementMode.Bottom };
+
+        foreach (VirtualAudioRecommendation recommendation in VirtualAudioRecommendations.All)
+        {
+            var item = new MenuItem
+            {
+                Header = _localizer[recommendation.NameKey],
+                ToolTip = _localizer[recommendation.NoteKey],
+            };
+
+            string url = recommendation.Url;
+            item.Click += (_, _) => OpenUrl(url);
+            menu.Items.Add(item);
+        }
+
+        menu.Items.Add(new Separator());
+        menu.Items.Add(new MenuItem
+        {
+            Header = _localizer["Recommend.Note"],
+            IsEnabled = false,
+        });
+
+        menu.IsOpen = true;
+    }
+
+    /// <summary>Opens one URL in the user's browser, reporting a failure instead of throwing.</summary>
+    private void OpenUrl(string url)
     {
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
-                FileName = "https://vb-audio.com/Cable/",
+                FileName = url,
                 UseShellExecute = true,
             });
         }

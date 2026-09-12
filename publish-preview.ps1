@@ -44,22 +44,47 @@ Write-Host '== MultiBT preview build ==' -ForegroundColor Cyan
 
 # ---------------------------------------------------------------------------- localisation pre-flight
 #
-# Every localisation key the ViewModel asks for must exist in BOTH language tables.
+# Every localisation key the app asks for must exist in BOTH language tables.
 #
 # Localizer returns the key itself when a lookup misses, so a typo does not crash or log anything -- it
 # ships a UI with the literal text "Status.SinkCleared" in it. That is exactly what happened: three keys
 # were referenced that did not exist or were misspelled, and two more existed only in Chinese, so the
 # English UI showed raw keys. Checking here makes it impossible to ship that again.
+#
+# EVERY App source file is scanned, not just the ViewModel. The recommended-device list names its keys from
+# its own file, and a gate that only looked at one file would wave those straight through.
 $localizerPath = Join-Path $root 'src/MultiBT.App/Localization/Localizer.cs'
-$viewModelPath = Join-Path $root 'src/MultiBT.App/ViewModels/MainViewModel.cs'
 $localizerText = Get-Content -LiteralPath $localizerPath -Raw
-$viewModelText = Get-Content -LiteralPath $viewModelPath -Raw
 
-$usedKeys = [regex]::Matches(
-    $viewModelText,
-    'Instance\["([A-Za-z0-9_.]+)"\]|Instance\.Format\("([A-Za-z0-9_.]+)"') |
-    ForEach-Object { if ($_.Groups[1].Value) { $_.Groups[1].Value } else { $_.Groups[2].Value } } |
-    Sort-Object -Unique
+$appSources = Get-ChildItem -Path (Join-Path $root 'src/MultiBT.App') -Recurse -Filter *.cs |
+    Where-Object { $_.FullName -notmatch '[\\/](obj|bin)[\\/]' } |
+    Where-Object { $_.Name -ne 'Localizer.cs' }
+
+$usedKeys = @()
+foreach ($source in $appSources) {
+    $text = Get-Content -LiteralPath $source.FullName -Raw
+
+    $usedKeys += [regex]::Matches(
+        $text,
+        'Instance\["([A-Za-z0-9_.]+)"\]|Instance\.Format\("([A-Za-z0-9_.]+)"|_localizer\["([A-Za-z0-9_.]+)"\]') |
+        ForEach-Object {
+            # No closing paren is required after Format("key": most calls pass arguments, so requiring one
+            # silently skipped them and the check under-reported what it was guarding.
+            @($_.Groups[1].Value, $_.Groups[2].Value, $_.Groups[3].Value) |
+                Where-Object { $_ -ne '' } | Select-Object -First 1
+        }
+
+    # Key-shaped string literals, for tables that name their keys from plain data rather than a lookup --
+    # the recommended-device list does exactly that, and a negative control proved the lookup patterns
+    # above miss it entirely, so a typo there would have shipped.
+    #
+    # The pattern needs no exclusions: of the 76 dotted capitalised literals in the App layer, every one is
+    # a localisation key. URLs and paths contain a separator and never match.
+    $usedKeys += [regex]::Matches($text, '"([A-Z][A-Za-z0-9]*(?:\.[A-Za-z0-9_]+)+)"') |
+        ForEach-Object { $_.Groups[1].Value }
+}
+
+$usedKeys = $usedKeys | Sort-Object -Unique
 
 $missingKeys = @()
 foreach ($key in $usedKeys) {
