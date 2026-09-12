@@ -150,9 +150,14 @@ public static class VirtualCableDetector
     /// because Windows cannot render audio into it.
     /// </param>
     /// <param name="configuredSinkId">The user's explicit choice, or null to auto-detect.</param>
+    /// <param name="currentDefaultSinkId">
+    /// The endpoint Windows currently renders into, or null when unknown. Breaks the tie when several
+    /// cables are installed — see the selection order below.
+    /// </param>
     public static AudioEndpointInfo? ResolveSourceSink(
         IEnumerable<AudioEndpointInfo> renderEndpoints,
-        string? configuredSinkId)
+        string? configuredSinkId,
+        string? currentDefaultSinkId = null)
     {
         ArgumentNullException.ThrowIfNull(renderEndpoints);
 
@@ -171,7 +176,21 @@ public static class VirtualCableDetector
             }
         }
 
-        return FindBestCaptureSink(endpoints);
+        // Which cable, when more than one is installed?
+        //
+        // The one Windows is ALREADY rendering into: that is the cable the sound is actually going into
+        // right now. Choosing any other captures a cable that nothing feeds, and the symptom is silence
+        // while every device reports itself as running.
+        //
+        // With no such hint, order by name so the choice is at least stable and matches what the user sees
+        // ("Line 1" before "Line 2"). An arbitrary pick that changes between runs cannot be reasoned about,
+        // and with several cables installed it decides whether the app works at all.
+        return endpoints
+            .Where(IsUsableCaptureSink)
+            .OrderByDescending(e => !string.IsNullOrEmpty(currentDefaultSinkId)
+                && string.Equals(e.EndpointId, currentDefaultSinkId, StringComparison.OrdinalIgnoreCase))
+            .ThenBy(e => e.FriendlyName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
     }
 
     private static bool Matches(string? text, string[] markers)

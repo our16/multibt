@@ -216,4 +216,72 @@ public sealed class VirtualCableDetectorTests
             [Endpoint("CABLE Input (VB-Audio Virtual Cable)", active: false)],
             configuredSinkId: null));
     }
+
+    [Fact]
+    public void ResolveSourceSinkFollowsTheCableWindowsIsRenderingInto()
+    {
+        // Two cables installed. Only one of them is receiving anything, and that is the one Windows is
+        // rendering into — anything else would be captured empty while every device reported as running.
+        AudioEndpointInfo first = Endpoint("Line 1 (Virtual Audio Cable)");
+        AudioEndpointInfo second = Endpoint("Line 2 (Virtual Audio Cable)");
+
+        AudioEndpointInfo? resolved = VirtualCableDetector.ResolveSourceSink(
+            [first, second],
+            configuredSinkId: null,
+            currentDefaultSinkId: second.EndpointId);
+
+        Assert.NotNull(resolved);
+        Assert.Equal(second.EndpointId, resolved.EndpointId);
+    }
+
+    [Fact]
+    public void ResolveSourceSinkIsStableWhenNoCableIsTheDefault()
+    {
+        // Windows is rendering to a real speaker, so no cable carries the audio yet. The choice must still
+        // be deterministic and ordered the way the names read, not dependent on enumeration order.
+        AudioEndpointInfo second = Endpoint("Line 2 (Virtual Audio Cable)");
+        AudioEndpointInfo first = Endpoint("Line 1 (Virtual Audio Cable)");
+
+        AudioEndpointInfo? resolved = VirtualCableDetector.ResolveSourceSink(
+            [second, first],
+            configuredSinkId: null,
+            currentDefaultSinkId: Endpoint("扬声器 (Realtek High Definition Audio)").EndpointId);
+
+        Assert.NotNull(resolved);
+        Assert.Equal(first.EndpointId, resolved.EndpointId);
+    }
+
+    [Fact]
+    public void ResolveSourceSinkPrefersAnExplicitChoiceOverTheDefaultCable()
+    {
+        // The user pointed the mirror at a specific cable; the fact that another one happens to be the
+        // Windows default must not override that.
+        AudioEndpointInfo chosen = Endpoint("Line 1 (Virtual Audio Cable)");
+        AudioEndpointInfo windowsDefault = Endpoint("Line 2 (Virtual Audio Cable)");
+
+        AudioEndpointInfo? resolved = VirtualCableDetector.ResolveSourceSink(
+            [chosen, windowsDefault],
+            configuredSinkId: chosen.EndpointId,
+            currentDefaultSinkId: windowsDefault.EndpointId);
+
+        Assert.NotNull(resolved);
+        Assert.Equal(chosen.EndpointId, resolved.EndpointId);
+    }
+
+    [Fact]
+    public void ResolveSourceSinkSkipsADefaultCableThatIsNotUsable()
+    {
+        // A disabled cable is the Windows default. It would capture silence, so fall through to the one
+        // that actually works rather than honouring the default blindly.
+        AudioEndpointInfo disabledDefault = Endpoint("Line 1 (Virtual Audio Cable)", active: false);
+        AudioEndpointInfo usable = Endpoint("Line 2 (Virtual Audio Cable)");
+
+        AudioEndpointInfo? resolved = VirtualCableDetector.ResolveSourceSink(
+            [disabledDefault, usable],
+            configuredSinkId: null,
+            currentDefaultSinkId: disabledDefault.EndpointId);
+
+        Assert.NotNull(resolved);
+        Assert.Equal(usable.EndpointId, resolved.EndpointId);
+    }
 }

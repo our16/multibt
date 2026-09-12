@@ -257,7 +257,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             AudioEndpointInfo? sink = VirtualCableDetector.ResolveSourceSink(
                 _devices.EnumerateRenderEndpoints(includeInactive: true),
-                _settings.Engine.CaptureSinkDeviceId);
+                _settings.Engine.CaptureSinkDeviceId,
+                CurrentDefaultRenderEndpointId);
 
             return sink is null
                 ? Localizer.Instance["Input.None"]
@@ -847,6 +848,28 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         catch (Exception ex)
         {
             StatusText = Localizer.Instance.Format("Status.CouldNotStart", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// The render endpoint Windows currently uses as default, or null when it cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// Asked of Windows every time rather than trusted from <c>_defaultRenderEndpointId</c>: the user can
+    /// change the default in Sound settings, and a stale answer decides which cable gets captured.
+    /// </remarks>
+    private string? CurrentDefaultRenderEndpointId
+    {
+        get
+        {
+            if (!_devices.TryGetDefaultRenderDevice(out MMDevice? current) || current is null)
+            {
+                return null;
+            }
+
+            string id = current.ID;
+            current.Dispose();
+            return id;
         }
     }
 
@@ -1526,7 +1549,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         // something they have no reason to know.
         AudioEndpointInfo? sink = VirtualCableDetector.ResolveSourceSink(
             _devices.EnumerateRenderEndpoints(includeInactive: true),
-            _settings.Engine.CaptureSinkDeviceId);
+            _settings.Engine.CaptureSinkDeviceId,
+            CurrentDefaultRenderEndpointId);
 
         if (sink is not null
             && _devices.TryResolveDevice(sink.EndpointId, out MMDevice? sinkDevice)
