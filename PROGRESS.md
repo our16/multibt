@@ -720,6 +720,98 @@ dotnet test  MultiBT.slnx   → 通过 118，失败 0   （110 → 118，本轮 
 
 ---
 
+> 最后更新：2026-09-12 17:40
+> 本轮：**虚拟声卡改为自动检测**（用户不再需要手动选择输入）；
+> 并查清了一件事：**本机的虚拟声卡在今天 13:43 被卸载了**，所以现在测不了。
+
+---
+
+## 🎯 输入改为自动检测：用户不需要知道「虚拟声卡」是什么
+
+设计意图（用户原话整理）：
+
+```text
+Windows / Chrome / 游戏 / Jellyfin
+        ↓
+  虚拟声卡（Playback 端）
+        ↓  虚拟声卡内部连通
+  虚拟声卡（Recording 端）
+        ↓
+     MultiBT 捕获
+        ↓
+  ┌─────┼─────┐
+  ↓     ↓     ↓
+ JBL   Sony  XGIMI
+```
+
+即：**虚拟声卡不是 MultiBT 的输出设备，而是 MultiBT 的输入来源**。
+`MultiBT 只负责「一份音频 → 多个音箱 + 同步」`，虚拟声卡只负责「把 Windows 音频送给 MultiBT」。
+
+因此**输入不应该让用户去选**。本轮实现：
+
+| 改动 | 位置 |
+| --- | --- |
+| `ResolveSourceSink()`：显式选择优先，否则自动检测 | `src/MultiBT.Core/Devices/VirtualCableDetector.cs` |
+| 开始同步时自动把 Windows 默认输出切到该声卡 | `MainViewModel.EnsureWindowsRendersIntoSource` |
+| 工具栏显示当前输入：`<声卡名>（自动）` | `MainWindow.xaml` + `AudioInputSummary` |
+| 文案不再只提 VB-CABLE（VB-CABLE / VoiceMeeter / VAC 都可） | `Localizer.cs` |
+
+几个刻意的决定：
+
+- **切换默认输出放在「开始同步」时，而不是启动时。** 启动时切换会在用户还没点任何东西之前
+  劫持整台机器的音频走向，这不可接受。
+- **切换失败必须可见。** 此时镜像在跑但没有任何声音能进来，
+  如果状态栏还显示「正在同步 3 个设备」，用户会以为是功能坏了。
+- **配置过的声卡消失时回退到自动检测**，而不是卡在一个不存在的设备上；
+  **配置过的 id 如果已经变成真扬声器则忽略**——否则会「扬声器原生播放 + 我们的延迟副本」双重发声。
+- **自动选择必须显示出来。** 自动检测和「什么都没检测到」的症状都是没声音，
+  不显示就无法区分。
+
+**测试**：`VirtualCableDetectorTests` 新增 9 个（含本机真实存在的
+`NVIDIA Virtual Audio Device (Wave Extensible) (WDM)` 必须**不**被当成虚拟声卡）。
+负向对照已做：把显式选择逻辑短路成始终自动检测，测试立刻失败。
+
+> ⚠️ 同时修掉一个测试自身的坑：原来的 `Endpoint()` 辅助方法给**每个**端点返回**同一个 id**。
+> 对旧测试无影响，但新测试是「按 id 选中正确设备」，同 id 会让断言**永远通过**而什么都没验证。
+> 现在按名称派生唯一 id。
+
+---
+
+## 🔴 本轮查明：本机的虚拟声卡在今天 13:43 被**卸载**了
+
+用户以为已经装好，实际证据（`C:\Windows\INF\setupapi.dev.log`）：
+
+```text
+2025/11/26 22:28:03   Device Install - VBVoicemeeterVAIO   cmd: -h -i -H -n
+                      INF: C:\Program Files (x86)\VB\Voicemeeter\vbvoicemeetervaio64_win10.inf
+                      → 注册为 ROOT\MEDIA\0000
+
+2026/09/12 13:43:06   Delete Device - ROOT\MEDIA\0000      cmd: -h -u -H
+                      → 随后 AudioEndpointBuilder 批量删除全部音频端点
+```
+
+也就是说：**本机原本有的是 VoiceMeeter 的 VAIO 虚拟声卡，今天 13:43 被 VB-Audio 的卸载命令删掉了**，
+之后没有任何音频驱动被安装。当前实测状态：
+
+```text
+Render 端点（20 个，含隐藏）：仅 3 个 ACTIVE，全是真实设备
+  ACTIVE  扬声器 (智能音箱 Pro-3420)          ← 蓝牙
+  ACTIVE  耳机 (MI Portable Speaker)          ← 蓝牙
+  ACTIVE  Realtek Digital Output
+Capture 端点：0 个 ACTIVE
+名称含 cable / line N / virtual / voicemeeter 的端点：0 个
+DriverStore 中最新音频驱动包：2025/11/26（VoiceMeeter VAIO，包还在，但设备实例已删除）
+```
+
+所以**代码已就绪，但当前无法端到端验证**。要恢复验证，需要用户重新安装一个虚拟声卡
+（VB-CABLE / VoiceMeeter / Virtual Audio Cable 任一，我们的检测都认），然后：
+开始同步时 MultiBT 会自动把 Windows 默认输出切到它并开始捕获——不需要手动选。
+
+**待验证**：`NVVoiceMeeterVAIOMME` 服务仍在、驱动包仍在，
+因此理论上可以只**重建设备实例**而不重装整套 VoiceMeeter；这一步需要管理员权限。
+
+---
+
 ## 里程碑
 
 | 里程碑 | 内容 | 状态 |
