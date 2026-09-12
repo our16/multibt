@@ -780,22 +780,35 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     public void RecomputeCompensations()
     {
+        // HasMeasurement is passed EXPLICITLY.
+        //
+        // It used to be omitted, and it defaults to true — so every device was reported as measured at
+        // whatever value it stored, which is 0 in practice because nothing measures latency here. A set
+        // that is entirely "measured at 0 ms" has a reference of 0 and yields 0 compensation for everyone:
+        // the mode appeared to work and did nothing. The flag is what distinguishes a real number from an
+        // assumption, and it decides whether a transport estimate is used instead.
         CompensationTarget[] targets = Devices
             .Select(d => new CompensationTarget(
                 d.Key,
                 d.Profile.Latency.MeasuredDelayRelRefMs,
-                d.Endpoint.Transport))
+                d.Endpoint.Transport,
+                d.Profile.Latency.HasMeasurement))
             .ToArray();
 
-        IReadOnlyDictionary<string, double> compensations = LatencyModel.ComputeCompensations(targets, Mode);
+        IReadOnlyDictionary<string, LatencyModel.DeviceCompensation> plan =
+            LatencyModel.ComputeCompensationPlan(targets, Mode);
 
         foreach (DeviceViewModel device in Devices)
         {
-            if (compensations.TryGetValue(device.Key, out double compensation))
+            if (plan.TryGetValue(device.Key, out LatencyModel.DeviceCompensation? entry))
             {
-                device.Profile.Latency.CompensationMs = compensation;
+                device.Profile.Latency.CompensationMs = entry.CompensationMs;
+                device.CompensationBasis = entry.Basis;
             }
         }
+
+        IReadOnlyDictionary<string, double> compensations = plan
+            .ToDictionary(pair => pair.Key, pair => pair.Value.CompensationMs, StringComparer.Ordinal);
 
         SystemLatencyMs = LatencyModel.ComputeSystemLatencyMs(targets, compensations, Mode);
         ExceedsLipSync = LatencyModel.ExceedsLipSyncThreshold(SystemLatencyMs);

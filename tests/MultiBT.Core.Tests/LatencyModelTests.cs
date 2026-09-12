@@ -156,4 +156,92 @@ public sealed class LatencyModelTests
         Assert.Equal(0.0, compensations["jbl"]);
         Assert.Equal(0.0, compensations["sony"]);
     }
+
+    // ---------------------------------------------------------------- the estimated path
+    //
+    // Nothing measures latency on this machine — acoustic measurement is not implemented end to end — so in
+    // practice every device arrives with HasMeasurement == false. Returning zero compensation for all of
+    // them, which is what treating "unmeasured" as "excluded" amounts to, made AlignAll a mode that did
+    // nothing at all while the UI presented it as aligning delays. These tests pin the replacement: a
+    // stated per-transport estimate, labelled as an estimate.
+
+    [Fact]
+    public void UnmeasuredDevicesAlignOnATransportEstimate()
+    {
+        CompensationTarget[] targets =
+        [
+            new("jbl", 0.0, Transport.Bluetooth, HasMeasurement: false),
+            new("usb-dac", 0.0, Transport.Usb, HasMeasurement: false),
+        ];
+
+        IReadOnlyDictionary<string, LatencyModel.DeviceCompensation> plan =
+            LatencyModel.ComputeCompensationPlan(targets, SyncMode.AlignAll);
+
+        // Bluetooth is assumed slow (200 ms), a wired endpoint fast (10 ms), so the wired one is delayed by
+        // the difference. Real numbers, and the basis says where they came from.
+        Assert.Equal(0.0, plan["jbl"].CompensationMs);
+        Assert.Equal(190.0, plan["usb-dac"].CompensationMs);
+        Assert.Equal(LatencyModel.CompensationBasis.Estimated, plan["jbl"].Basis);
+        Assert.Equal(200.0, plan["jbl"].AssumedLatencyMs);
+        Assert.Equal(10.0, plan["usb-dac"].AssumedLatencyMs);
+    }
+
+    [Fact]
+    public void AMeasurementBeatsTheEstimateForTheSameDevice()
+    {
+        CompensationTarget[] targets =
+        [
+            new("jbl", 120.0, Transport.Bluetooth),
+            new("usb-dac", 0.0, Transport.Usb, HasMeasurement: false),
+        ];
+
+        IReadOnlyDictionary<string, LatencyModel.DeviceCompensation> plan =
+            LatencyModel.ComputeCompensationPlan(targets, SyncMode.AlignAll);
+
+        // The measured 120 wins over the 200 estimate, and it is the measured value that anchors the set,
+        // so the wired device is delayed by 120 - 10 rather than 200 - 10.
+        Assert.Equal(LatencyModel.CompensationBasis.Measured, plan["jbl"].Basis);
+        Assert.Equal(120.0, plan["jbl"].AssumedLatencyMs);
+        Assert.Equal(110.0, plan["usb-dac"].CompensationMs);
+    }
+
+    [Fact]
+    public void WiredOnlyStillLeavesBluetoothAloneWithoutMeasurements()
+    {
+        CompensationTarget[] targets =
+        [
+            new("jbl", 0.0, Transport.Bluetooth, HasMeasurement: false),
+            new("usb-dac", 0.0, Transport.Usb, HasMeasurement: false),
+        ];
+
+        IReadOnlyDictionary<string, LatencyModel.DeviceCompensation> plan =
+            LatencyModel.ComputeCompensationPlan(targets, SyncMode.WiredOnly);
+
+        Assert.Equal(0.0, plan["jbl"].CompensationMs);
+        Assert.Equal(LatencyModel.CompensationBasis.None, plan["jbl"].Basis);
+
+        // Only one wired device is present, so nothing in the aligned group can be slow relative to it.
+        Assert.Equal(0.0, plan["usb-dac"].CompensationMs);
+    }
+
+    [Fact]
+    public void SystemLatencyUsesTheEstimateWhenNothingIsMeasured()
+    {
+        CompensationTarget[] targets =
+        [
+            new("jbl", 0.0, Transport.Bluetooth, HasMeasurement: false),
+            new("usb-dac", 0.0, Transport.Usb, HasMeasurement: false),
+        ];
+
+        IReadOnlyDictionary<string, double> compensations =
+            LatencyModel.ComputeCompensations(targets, SyncMode.AlignAll);
+
+        // Aligning everything to a Bluetooth speaker really does put the system at ~200 ms, which breaks
+        // lip-sync — and saying so is the entire purpose of this figure. Reporting 0 because nothing was
+        // formally measured would hide the very problem it exists to warn about.
+        double systemLatency = LatencyModel.ComputeSystemLatencyMs(targets, compensations, SyncMode.AlignAll);
+
+        Assert.Equal(200.0, systemLatency);
+        Assert.True(LatencyModel.ExceedsLipSyncThreshold(systemLatency));
+    }
 }

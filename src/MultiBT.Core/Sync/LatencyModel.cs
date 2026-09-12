@@ -61,77 +61,159 @@ public static class LatencyModel
     }
 
     /// <summary>
-    /// Computes the automatic compensation for every device.
+    /// What a device's assumed latency is based on.
+    /// </summary>
+    public enum CompensationBasis
+    {
+        /// <summary>The device takes no part in alignment and gets no compensation.</summary>
+        None = 0,
+
+        /// <summary>
+        /// No measurement exists, so a typical latency for the device's transport was assumed.
+        /// </summary>
+        Estimated = 1,
+
+        /// <summary>A measurement exists and was used.</summary>
+        Measured = 2,
+    }
+
+    /// <summary>One device's compensation, and what it was derived from.</summary>
+    /// <param name="CompensationMs">Delay to add, in ms.</param>
+    /// <param name="Basis">Whether that came from a measurement, an estimate, or nothing.</param>
+    /// <param name="AssumedLatencyMs">The latency the device was assumed to have.</param>
+    public sealed record DeviceCompensation(double CompensationMs, CompensationBasis Basis, double AssumedLatencyMs);
+
+    /// <summary>
+    /// A typical end-to-end latency for a transport, used when nothing has been measured.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// In <see cref="SyncMode.AlignAll"/> every participating device is delayed so that all of
-    /// them land at <c>max(measured)</c> over the measured set. In
-    /// <see cref="SyncMode.WiredOnly"/> only the non-Bluetooth group is aligned internally, and
-    /// Bluetooth devices get zero compensation so they keep their natural latency.
+    /// These are ESTIMATES, not measurements, and every caller that shows them must say so. They exist
+    /// because the alternative is worse: with no measurement at all — which is the normal state, since
+    /// acoustic measurement is not implemented end to end — alignment would add exactly zero to every
+    /// device while presenting itself as a working mode. That is how a user ends up staring at a delay
+    /// field wondering where the number came from, or why two speakers are audibly out of step.
     /// </para>
     /// <para>
-    /// <b>Devices without a measurement get zero compensation and do not set the reference.</b>
-    /// They play at their natural latency, which is the only defensible choice: their latency is
-    /// unknown, so neither delaying them to the reference nor treating them as the reference is
-    /// justified. The UI flags them as unmeasured so the user can run a calibration.
+    /// The values are chosen to be right about the one thing that matters: Bluetooth is an order of
+    /// magnitude slower than everything wired, so aligning a wired speaker to a Bluetooth one is the case
+    /// that needs a real number. Being roughly right there is far better than being exactly zero, because
+    /// the residual error is what the manual offset is for.
     /// </para>
     /// </remarks>
-    public static IReadOnlyDictionary<string, double> ComputeCompensations(
+    public static double EstimateLatencyMs(Transport transport) => transport switch
+    {
+        // A2DP buffering is typically 150-400 ms.
+        Transport.Bluetooth => 200.0,
+
+        // HDMI sinks re-clock the stream; a frame or so.
+        Transport.Hdmi => 20.0,
+
+        // A wired endpoint's own buffer.
+        Transport.Usb => 10.0,
+
+        // Wired analogue, or a virtual device: negligible, but not nothing.
+        _ => 10.0,
+    };
+
+    /// <summary>
+    /// The latency assumed for one device: its measurement when there is one, otherwise an estimate.
+    /// </summary>
+    public static (double LatencyMs, CompensationBasis Basis) AssumedLatency(CompensationTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        return target.HasMeasurement
+            ? (target.MeasuredDelayRelRefMs, CompensationBasis.Measured)
+            : (EstimateLatencyMs(target.Transport), CompensationBasis.Estimated);
+    }
+
+    /// <summary>
+    /// Computes the automatic compensation for every device, with its basis.
+    /// </summary>
+    /// <remarks>
+    /// In <see cref="SyncMode.AlignAll"/> every participating device is delayed so that all of them land at
+    /// the slowest assumed latency in the set. In <see cref="SyncMode.WiredOnly"/> Bluetooth devices are
+    /// excluded and keep their natural latency, so only the wired group is aligned internally.
+    /// </remarks>
+    public static IReadOnlyDictionary<string, DeviceCompensation> ComputeCompensationPlan(
         IReadOnlyCollection<CompensationTarget> targets,
         SyncMode mode,
         int maxDelayMs = EngineTunables.MaxDelayMs)
     {
         ArgumentNullException.ThrowIfNull(targets);
 
-        var result = new Dictionary<string, double>(StringComparer.Ordinal);
+        var result = new Dictionary<string, DeviceCompensation>(StringComparer.Ordinal);
         if (targets.Count == 0)
         {
             return result;
         }
 
-        // Only measured devices may take part in the alignment: an unmeasured device has no
-        // known delay, so it can neither be aligned nor anchor the reference.
+        // Participants: everything, except Bluetooth under WiredOnly.
         List<CompensationTarget> aligned = targets
-            .Where(t => t.HasMeasurement)
             .Where(t => mode != SyncMode.WiredOnly || t.Transport != Transport.Bluetooth)
             .ToList();
 
         if (aligned.Count == 0)
         {
-            // Nothing measurable to align against: leave every device at its natural latency.
+            // Nothing to align against: every device keeps its natural latency.
             foreach (CompensationTarget target in targets)
             {
-                result[target.DeviceKey] = 0.0;
+                result[target.DeviceKey] = new DeviceCompensation(0.0, CompensationBasis.None, 0.0);
             }
 
             return result;
         }
 
-        double referenceMs = aligned.Max(t => t.MeasuredDelayRelRefMs);
+        var assumed = targets.ToDictionary(
+            t => t.DeviceKey,
+            t => AssumedLatency(t),
+            StringComparer.Ordinal);
+
+        double referenceMs = aligned.Max(t => assumed[t.DeviceKey].LatencyMs);
         var alignedKeys = aligned.Select(t => t.DeviceKey).ToHashSet(StringComparer.Ordinal);
 
         foreach (CompensationTarget target in targets)
         {
-            double compensation = alignedKeys.Contains(target.DeviceKey)
-                ? referenceMs - target.MeasuredDelayRelRefMs
-                : 0.0;
+            (double latency, CompensationBasis basis) = assumed[target.DeviceKey];
 
-            result[target.DeviceKey] = Math.Clamp(compensation, 0.0, maxDelayMs);
+            if (!alignedKeys.Contains(target.DeviceKey))
+            {
+                result[target.DeviceKey] = new DeviceCompensation(0.0, CompensationBasis.None, latency);
+                continue;
+            }
+
+            double compensation = Math.Clamp(referenceMs - latency, 0.0, maxDelayMs);
+            result[target.DeviceKey] = new DeviceCompensation(compensation, basis, latency);
         }
 
         return result;
     }
 
     /// <summary>
+    /// Computes the automatic compensation for every device.
+    /// </summary>
+    public static IReadOnlyDictionary<string, double> ComputeCompensations(
+        IReadOnlyCollection<CompensationTarget> targets,
+        SyncMode mode,
+        int maxDelayMs = EngineTunables.MaxDelayMs) =>
+        ComputeCompensationPlan(targets, mode, maxDelayMs)
+            .ToDictionary(pair => pair.Key, pair => pair.Value.CompensationMs, StringComparer.Ordinal);
+
+    /// <summary>
     /// The system's end-to-end latency implied by a set of compensations, in ms.
     /// </summary>
     /// <remarks>
-    /// This is <c>max(measured + compensation)</c> over the MEASURED participating devices — i.e.
-    /// the latency of the device everything else is aligned to, and the number that decides
-    /// whether video is watchable. Unmeasured devices are excluded because their contribution
-    /// cannot be known; including them as zero would understate the figure and hide a lip-sync
-    /// problem, which is the one thing this number exists to warn about.
+    /// <para>
+    /// This is <c>max(assumed latency + compensation)</c> over the participating devices — i.e. the latency
+    /// of the device everything else is aligned to, and the number that decides whether video is watchable.
+    /// </para>
+    /// <para>
+    /// "Assumed" rather than "measured", because an estimate is exactly what the figure is based on when
+    /// nothing has been measured. Reporting 0 in that case would claim there is no latency problem at all:
+    /// aligning to a Bluetooth speaker really does mean ~200 ms, which is what makes lip-sync fail, and the
+    /// whole point of this number is to warn about that.
+    /// </para>
     /// </remarks>
     public static double ComputeSystemLatencyMs(
         IReadOnlyCollection<CompensationTarget> targets,
@@ -146,18 +228,14 @@ public static class LatencyModel
 
         foreach (CompensationTarget target in targets)
         {
-            if (!target.HasMeasurement)
-            {
-                continue;
-            }
-
             if (mode == SyncMode.WiredOnly && target.Transport == Transport.Bluetooth)
             {
                 continue;
             }
 
+            (double latency, _) = AssumedLatency(target);
             double compensation = compensations.TryGetValue(target.DeviceKey, out double c) ? c : 0.0;
-            double total = target.MeasuredDelayRelRefMs + compensation;
+            double total = latency + compensation;
 
             worst = any ? Math.Max(worst, total) : total;
             any = true;

@@ -20,6 +20,7 @@ public sealed class DeviceViewModel : ObservableObject
 {
     private bool _isEnabled;
     private double _manualOffsetMs;
+    private LatencyModel.CompensationBasis _compensationBasis;
     private string _status = "Idle";
     private bool _isPrimary;
     private double _endpointVolume = double.NaN;
@@ -247,6 +248,26 @@ public sealed class DeviceViewModel : ObservableObject
     /// </remarks>
     public double EffectiveDelayMs => LatencyModel.ComputeEffectiveDelayMs(Profile.Latency);
 
+    /// <summary>
+    /// What the automatic part of this device's delay is based on: a measurement, an estimate, or nothing.
+    /// </summary>
+    /// <remarks>
+    /// Shown so the number is attributable. A delay that appears with no explanation is indistinguishable
+    /// from a bug, and the two possible sources — a measurement and a per-transport estimate — carry very
+    /// different confidence.
+    /// </remarks>
+    public LatencyModel.CompensationBasis CompensationBasis
+    {
+        get => _compensationBasis;
+        set
+        {
+            if (SetProperty(ref _compensationBasis, value))
+            {
+                OnPropertyChanged(nameof(LatencySummary));
+            }
+        }
+    }
+
     /// <summary>Manual delay as shown in the UI, e.g. "125 ms".</summary>
     public string DelayLabel => string.Create(
         CultureInfo.InvariantCulture,
@@ -263,9 +284,15 @@ public sealed class DeviceViewModel : ObservableObject
             string trim = loc.Format("Latency.Trim", $"{latency.ManualOffsetMs:+0;-0;0}");
             string effective = loc.Format("Latency.Effective", $"{EffectiveDelayMs:0}");
 
+            // No measurement: state what the automatic part was based on instead, so the effective number
+            // is never unattributed.
             if (!latency.HasMeasurement)
             {
-                return $"{loc["Latency.NotMeasured"]} · {trim} → {effective}";
+                string automatic = _compensationBasis == LatencyModel.CompensationBasis.Estimated
+                    ? loc.Format("Latency.Estimated", $"{latency.CompensationMs:+0;-0;0}")
+                    : loc["Latency.NoCompensation"];
+
+                return $"{automatic} · {trim} → {effective}";
             }
 
             string stale = latency.MeasurementIsStale ? " · " + loc["Latency.Stale"] : string.Empty;

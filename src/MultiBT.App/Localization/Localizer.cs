@@ -136,6 +136,8 @@ public sealed class Localizer : INotifyPropertyChanged
 
         // latency summary
         ["Latency.NotMeasured"] = "未测量",
+        ["Latency.Estimated"] = "估算补偿 {0} ms",
+        ["Latency.NoCompensation"] = "无补偿",
         ["Latency.Measured"] = "测量 {0} ms",
         ["Latency.LowConfidence"] = "低置信度",
         ["Latency.Compensation"] = "补偿 {0} ms",
@@ -290,6 +292,8 @@ public sealed class Localizer : INotifyPropertyChanged
         ["Transport.PairedNotConnected"] = "paired, not connected",
 
         ["Latency.NotMeasured"] = "not measured",
+        ["Latency.Estimated"] = "estimated compensation {0} ms",
+        ["Latency.NoCompensation"] = "no compensation",
         ["Latency.Measured"] = "measured {0} ms",
         ["Latency.LowConfidence"] = "low confidence",
         ["Latency.Compensation"] = "compensation {0} ms",
