@@ -106,6 +106,9 @@ public sealed class DeviceProfile
 
     public DeviceAudioSettings Audio { get; set; } = new();
 
+    /// <summary>Where this device sits relative to the listener, for the spatial mix.</summary>
+    public DeviceSpatialSettings Spatial { get; set; } = new();
+
     /// <summary>Whether the user last chose this device as the primary capture source.</summary>
     public bool IsPrimary { get; set; }
 
@@ -121,6 +124,48 @@ public sealed class DeviceProfile
 
     /// <summary>Channel count observed the last time this endpoint was opened.</summary>
     public int? LastObservedChannels { get; set; }
+}
+
+/// <summary>
+/// Where a device sits relative to the listener, in metres.
+/// </summary>
+/// <remarks>
+/// <para>
+/// All three axes default to zero, which means "the listener's own position" — and that is deliberately the
+/// same thing as "not configured". A device nobody has placed behaves exactly as it did before this feature
+/// existed: unity gain, no added delay. There is no separate "enabled" flag to get out of step with the
+/// coordinates.
+/// </para>
+/// <para>
+/// Metres rather than abstract units because the distance delay is a physical quantity: the speed of sound
+/// is what turns a difference in distance into a difference in arrival time.
+/// </para>
+/// </remarks>
+public sealed class DeviceSpatialSettings
+{
+    /// <summary>Positive is to the listener's right, negative to the left.</summary>
+    public double Right { get; set; }
+
+    /// <summary>Positive is in front of the listener, negative behind.</summary>
+    public double Front { get; set; }
+
+    /// <summary>Positive is above the listener, negative below.</summary>
+    public double Up { get; set; }
+
+    /// <summary>Whether the user has placed this device at all.</summary>
+    public bool IsConfigured =>
+        Math.Abs(Right) > 0.0001 || Math.Abs(Front) > 0.0001 || Math.Abs(Up) > 0.0001;
+
+    /// <summary>This device's position, as the spatial mixer wants it.</summary>
+    public DevicePosition ToPosition() => new(Right, Front, Up);
+
+    /// <summary>Overwrites the position in place, so bindings keep pointing at this instance.</summary>
+    public void Set(double right, double front, double up)
+    {
+        Right = right;
+        Front = front;
+        Up = up;
+    }
 }
 
 /// <summary>Per-device audio settings.</summary>
