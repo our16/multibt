@@ -1,8 +1,10 @@
-using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using MultiBT.App.Localization;
 using MultiBT.App.ViewModels;
 using MultiBT.Core.Audio;
+using MultiBT.Core.Config;
+using MultiBT.Core.Devices;
 using MultiBT.Core.Sync;
 
 namespace MultiBT.App;
@@ -19,6 +21,7 @@ namespace MultiBT.App;
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel;
+    private readonly Localizer _localizer = Localizer.Instance;
     private bool _initialising;
 
     public MainWindow(MainViewModel viewModel)
@@ -31,8 +34,6 @@ public partial class MainWindow : Window
 
         DataContext = _viewModel;
 
-        // Populate the pickers. Guarded so that assigning the initial selection does not fire
-        // the change handlers and kick off a recompute before the window is even shown.
         _initialising = true;
 
         foreach (int preset in EngineTunables.LatencyPresetsMs)
@@ -42,11 +43,15 @@ public partial class MainWindow : Window
 
         LatencyPresetBox.SelectedItem = _viewModel.EngineLatencyMs;
 
-        _ = SyncModeBox.Items.Add(SyncMode.AlignAll);
-        _ = SyncModeBox.Items.Add(SyncMode.WiredOnly);
-        SyncModeBox.SelectedItem = _viewModel.Mode;
+        RebuildSyncModeItems();
+        RebuildLanguageItems();
+        RebuildCaptureSinkItems();
 
         _initialising = false;
+
+        // Enum-valued pickers display localised TEXT, which the Localizer's indexer binding cannot
+        // reach (ComboBox items are not bindings), so they have to be rebuilt on a language change.
+        _localizer.LanguageChanged += OnLanguageChanged;
     }
 
     /// <summary>The view model this window is bound to.</summary>
@@ -62,7 +67,7 @@ public partial class MainWindow : Window
     public bool AllowClose { get; set; }
 
     /// <inheritdoc />
-    protected override void OnClosing(CancelEventArgs e)
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         if (!AllowClose)
         {
@@ -74,17 +79,123 @@ public partial class MainWindow : Window
         base.OnClosing(e);
     }
 
-    private void OnRefreshDevices(object sender, RoutedEventArgs e) => _viewModel.RefreshDevices();
-
-    private void OnAutoMatchLevels(object sender, RoutedEventArgs e) => _viewModel.AutoMatchLevels();
-
-    private void OnMaximizeEndpointVolume(object sender, RoutedEventArgs e)
+    /// <summary>Rebuilds the sync-mode picker with localised labels, keeping the selection.</summary>
+    private void RebuildSyncModeItems()
     {
-        if (sender is FrameworkElement { DataContext: DeviceViewModel device })
+        SyncMode current = _viewModel.Mode;
+
+        SyncModeBox.Items.Clear();
+        _ = SyncModeBox.Items.Add(new ComboBoxItem
         {
-            _viewModel.MaximizeEndpointVolume(device);
+            Content = _localizer["SyncMode.AlignAll"],
+            Tag = SyncMode.AlignAll,
+        });
+        _ = SyncModeBox.Items.Add(new ComboBoxItem
+        {
+            Content = _localizer["SyncMode.WiredOnly"],
+            Tag = SyncMode.WiredOnly,
+        });
+
+        SyncModeBox.SelectedIndex = current == SyncMode.WiredOnly ? 1 : 0;
+    }
+
+    /// <summary>Rebuilds the language picker, keeping the selection.</summary>
+    private void RebuildLanguageItems()
+    {
+        UiLanguage current = _viewModel.Language;
+
+        LanguageBox.Items.Clear();
+        _ = LanguageBox.Items.Add(new ComboBoxItem { Content = _localizer["Language.Chinese"], Tag = UiLanguage.Chinese });
+        _ = LanguageBox.Items.Add(new ComboBoxItem { Content = _localizer["Language.English"], Tag = UiLanguage.English });
+
+        LanguageBox.SelectedIndex = current == UiLanguage.English ? 1 : 0;
+    }
+
+    private void OnLanguageChanged(object? sender, EventArgs e)
+    {
+        bool wasInitialising = _initialising;
+        _initialising = true;
+
+        try
+        {
+            RebuildSyncModeItems();
+            RebuildLanguageItems();
+            RebuildCaptureSinkItems();
+        }
+        finally
+        {
+            _initialising = wasInitialising;
         }
     }
+
+    private void OnLanguageSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initialising || LanguageBox.SelectedItem is not ComboBoxItem { Tag: UiLanguage language })
+        {
+            return;
+        }
+
+        _viewModel.SetLanguage(language);
+    }
+
+    /// <summary>
+    /// Builds the capture-sink list: usable virtual cables first, then everything else.
+    /// </summary>
+    /// <remarks>
+    /// The candidates come from a live endpoint enumeration rather than the device list, because the sink
+    /// is not something the user listens to and is therefore not one of the output rows.
+    /// </remarks>
+    private void RebuildCaptureSinkItems()
+    {
+        SinkBox.Items.Clear();
+
+        _ = SinkBox.Items.Add(new ComboBoxItem
+        {
+            Content = _localizer["Sink.Auto"],
+            Tag = null,
+        });
+
+        foreach (AudioEndpointInfo endpoint in _viewModel.CaptureSinkCandidates)
+        {
+            string name = VirtualCableDetector.IsUsableCaptureSink(endpoint)
+                ? $"★ {endpoint.FriendlyName}"
+                : endpoint.FriendlyName;
+
+            _ = SinkBox.Items.Add(new ComboBoxItem { Content = name, Tag = endpoint.EndpointId });
+        }
+
+        string? current = _viewModel.CaptureSinkEndpointId;
+
+        SinkBox.SelectedIndex = 0;
+
+        for (int i = 0; i < SinkBox.Items.Count; i++)
+        {
+            if (SinkBox.Items[i] is ComboBoxItem { Tag: string id }
+                && string.Equals(id, current, StringComparison.OrdinalIgnoreCase))
+            {
+                SinkBox.SelectedIndex = i;
+                break;
+            }
+        }
+    }
+
+    private void OnCaptureSinkChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initialising || SinkBox.SelectedItem is not ComboBoxItem item)
+        {
+            return;
+        }
+
+        _viewModel.SetCaptureSink(item.Tag as string);
+    }
+
+    private void OnRefreshDevices(object sender, RoutedEventArgs e)
+    {
+        _viewModel.RefreshDevices();
+        RebuildCaptureSinkItems();
+    }
+
+    private void OnAutoMatchLevels(object sender, RoutedEventArgs e) => _viewModel.AutoMatchLevels();
 
     private void OnLatencyPresetChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -98,7 +209,7 @@ public partial class MainWindow : Window
 
     private void OnSyncModeChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_initialising || SyncModeBox.SelectedItem is not SyncMode mode)
+        if (_initialising || SyncModeBox.SelectedItem is not ComboBoxItem { Tag: SyncMode mode })
         {
             return;
         }
@@ -114,7 +225,7 @@ public partial class MainWindow : Window
 
     private void OnPrimaryDeviceClick(object sender, RoutedEventArgs e)
     {
-        if (sender is RadioButton radioButton && radioButton.DataContext is DeviceViewModel device)
+        if (sender is FrameworkElement { DataContext: DeviceViewModel device })
         {
             _viewModel.SetPrimaryDevice(device);
         }

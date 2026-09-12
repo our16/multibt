@@ -9,11 +9,23 @@
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <RootNamespace>MultiBT.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Bakes the icon into the executable (Explorer, taskbar, Alt-Tab). -->
+    <ApplicationIcon>Assets\multibt.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
     <ProjectReference Include="..\MultiBT.Core\MultiBT.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Also embedded as a WPF resource so the TRAY icon can be loaded as a real multi-size .ico rather
+      than by extracting one frame out of the executable. That is what lets Windows pick a crisp
+      16/20/24 px frame for the notification area at any DPI instead of downscaling a single bitmap.
+    -->
+    <Resource Include="Assets\multibt.ico" />
   </ItemGroup>
 
   <!--

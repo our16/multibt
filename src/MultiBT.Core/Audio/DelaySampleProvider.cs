@@ -91,13 +91,22 @@ public sealed class DelaySampleProvider : ISampleProvider
     /// audio. A brief gap is strictly better than half a minute of detuned playback.
     /// See docs/PITFALLS.md B9.
     /// </remarks>
-    public bool SetDelayFrames(int targetFrames, out bool requiresMuteResync)
+    /// <param name="immediate">
+    /// Skip the glide and land on the requested delay at once.
+    /// </param>
+    /// <remarks>
+    /// <b>Glide is for drift, immediate is for the user.</b> Gliding is rate-limited to about 0.5 % of
+    /// the read size, i.e. roughly 5 ms per second, which is right for the controller's
+    /// sub-millisecond corrections and hopeless for a slider: dragging to 125 ms would take ~25 seconds,
+    /// so the slider appeared to do nothing at all. A user-driven change must land now, behind a fade.
+    /// </remarks>
+    public bool SetDelayFrames(int targetFrames, out bool requiresMuteResync, bool immediate = false)
     {
         targetFrames = Math.Clamp(targetFrames, 0, _maxUsableFrames);
 
         int delta = Math.Abs(targetFrames - _delayFrames);
 
-        if (delta <= _glideThresholdFrames)
+        if (!immediate && delta <= _glideThresholdFrames)
         {
             _targetDelayFrames = targetFrames;
             requiresMuteResync = false;
@@ -111,10 +120,10 @@ public sealed class DelaySampleProvider : ISampleProvider
     }
 
     /// <summary>Convenience overload taking milliseconds.</summary>
-    public bool SetDelayMs(double delayMs, out bool requiresMuteResync)
+    public bool SetDelayMs(double delayMs, out bool requiresMuteResync, bool immediate = false)
     {
         int frames = (int)Math.Round(delayMs / 1000.0 * WaveFormat.SampleRate, MidpointRounding.AwayFromZero);
-        return SetDelayFrames(frames, out requiresMuteResync);
+        return SetDelayFrames(frames, out requiresMuteResync, immediate);
     }
 
     /// <summary>

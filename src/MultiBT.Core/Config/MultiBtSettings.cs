@@ -4,6 +4,15 @@ using MultiBT.Core.Sync;
 
 namespace MultiBT.Core.Config;
 
+/// <summary>UI language. Persisted with the other settings.</summary>
+public enum UiLanguage
+{
+    /// <summary>Chinese. The default.</summary>
+    Chinese = 0,
+
+    English = 1,
+}
+
 /// <summary>Root settings document. Persisted to <c>%APPDATA%\MultiBT\profiles.json</c>.</summary>
 public sealed class MultiBtSettings
 {
@@ -42,6 +51,16 @@ public sealed class EngineSettings
     /// <summary>Render endpoint to mirror, or <c>null</c> to follow the Windows default render device.</summary>
     public string? SourceDeviceId { get; set; }
 
+    /// <summary>
+    /// The virtual cable Windows should render into, or <c>null</c> when none is configured.
+    /// </summary>
+    /// <remarks>
+    /// With a cable selected, every real speaker becomes one of our OUTPUTS, so all of them gain delay
+    /// and volume control. Without it, whichever device Windows renders to plays natively and can never
+    /// be delayed — the limitation that made the primary device uncontrollable.
+    /// </remarks>
+    public string? CaptureSinkDeviceId { get; set; }
+
     public bool StartWithWindows { get; set; }
 
     public bool AutoResumeLastProfile { get; set; } = true;
@@ -69,7 +88,7 @@ public sealed class DeviceIdentities
     public string? FriendlyName { get; set; }
 }
 
-/// <summary>A device's persistent record.</summary>
+/// <summary>A device's persistent record — its remembered preferences.</summary>
 public sealed class DeviceProfile
 {
     /// <summary>Stable key used by profiles and by the engine. Never an endpoint id.</summary>
@@ -85,6 +104,22 @@ public sealed class DeviceProfile
     public DeviceLatencySettings Latency { get; set; } = new();
 
     public DeviceAudioSettings Audio { get; set; } = new();
+
+    /// <summary>Whether the user last chose this device as the primary capture source.</summary>
+    public bool IsPrimary { get; set; }
+
+    /// <summary>
+    /// Sample rate observed for this endpoint the last time it was opened.
+    /// </summary>
+    /// <remarks>
+    /// Remembered so that a CHANGE can be detected: a device whose mix format moved (a Bluetooth
+    /// speaker renegotiating its codec, a driver update) invalidates any stored latency measurement,
+    /// because that measurement was taken under the previous format. See docs/SPEC.md §5.3.
+    /// </remarks>
+    public int? LastObservedSampleRate { get; set; }
+
+    /// <summary>Channel count observed the last time this endpoint was opened.</summary>
+    public int? LastObservedChannels { get; set; }
 }
 
 /// <summary>Per-device audio settings.</summary>
@@ -106,6 +141,32 @@ public sealed class DeviceAudioSettings
     /// </para>
     /// </remarks>
     public double Gain { get; set; } = 1.0;
+
+    /// <summary>
+    /// The device's output volume we last set, 0..1, or <c>null</c> when never set.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Remembered so the user does not have to re-do per-device volume matching every session. It is
+    /// applied when the mirror STARTS, not when devices are enumerated — enumeration shows the
+    /// device's real current volume, so a change made in Windows is never silently overwritten just
+    /// because MultiBT was launched.
+    /// </para>
+    /// <para>
+    /// <c>null</c> is distinct from 0: 0 is a legitimate (silent) setting the user may have chosen.
+    /// </para>
+    /// </remarks>
+    public double? DesiredVolume { get; set; }
+
+    /// <summary>
+    /// Whether this device was enabled the last time the user had it on.
+    /// </summary>
+    /// <remarks>
+    /// Nullable on purpose: null means no explicit choice was ever made, which preserves the
+    /// long-standing default that a device with a stored profile starts enabled. A plain false
+    /// default would silently switch every existing user's devices off on the first run of this build.
+    /// </remarks>
+    public bool? Enabled { get; set; }
 
     public bool Muted { get; set; }
 
@@ -147,4 +208,7 @@ public sealed class UiSettings
     public bool StartMinimizedToTray { get; set; } = true;
 
     public bool ShowLevelMeters { get; set; } = true;
+
+    /// <summary>UI language. Defaults to Chinese.</summary>
+    public UiLanguage Language { get; set; } = UiLanguage.Chinese;
 }

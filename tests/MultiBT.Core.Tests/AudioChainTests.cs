@@ -153,6 +153,67 @@ public sealed class DelaySampleProviderTests
         // that SetDelayFrames actually applies.
         Assert.InRange(provider.MaxDelayMs, 100.0, 100.1);
     }
+
+    [Fact]
+    public void UserDelayLandsImmediately()
+    {
+        // Regression test for "manual delay does nothing".
+        //
+        // The glide path is rate-limited to about 0.5 % of the read size, i.e. roughly 5 ms per second,
+        // which is correct for drift correction and hopeless for a slider: dragging to 125 ms would
+        // take ~25 seconds. A user-driven change must land at once.
+        var provider = new DelaySampleProvider(new RampSource(), maxDelayMs: 1000);
+
+        provider.SetDelayMs(125.0, out bool requiresMuteResync, immediate: true);
+
+        Assert.True(requiresMuteResync);          // the caller must fade around it
+        Assert.Equal(6000, provider.AppliedDelayFrames);   // 125 ms at 48 kHz, applied NOW
+
+        // Without the immediate flag the very same change would only be scheduled, not applied.
+        var gliding = new DelaySampleProvider(new RampSource(), maxDelayMs: 1000);
+        gliding.SetDelayMs(125.0, out bool glidedResync);
+
+        Assert.True(glidedResync);                // > 20 ms, so it also steps immediately
+        Assert.Equal(6000, gliding.AppliedDelayFrames);
+    }
+
+    [Fact]
+    public void SmallChangesStillGlideSoDriftCorrectionStaysInaudible()
+    {
+        // The immediate path must not have replaced glide: the drift controller relies on gradual,
+        // inaudible rate changes for its sub-millisecond corrections.
+        var provider = new DelaySampleProvider(new RampSource(), maxDelayMs: 1000);
+        provider.SetDelayMs(100.0, out _, immediate: true);
+
+        int before = provider.AppliedDelayFrames;
+
+        // 5 ms = 240 frames, below the 20 ms glide threshold.
+        provider.SetDelayMs(105.0, out bool requiresMuteResync);
+
+        Assert.False(requiresMuteResync);
+        Assert.Equal(before, provider.AppliedDelayFrames);   // not applied yet
+
+        var buffer = new float[480];
+        provider.Read(buffer);
+
+        // One 480-frame read may move the delay by at most 0.5 % of the read, i.e. 2 frames.
+        Assert.InRange(provider.AppliedDelayFrames - before, 1, 3);
+    }
+
+    [Fact]
+    public void ImmediateFlagOverridesGlideForTheSameSmallChange()
+    {
+        var provider = new DelaySampleProvider(new RampSource(), maxDelayMs: 1000);
+        provider.SetDelayMs(100.0, out _, immediate: true);
+
+        int before = provider.AppliedDelayFrames;
+
+        // Identical 5 ms change, but user-driven: it must land at once rather than glide for seconds.
+        provider.SetDelayMs(105.0, out bool requiresMuteResync, immediate: true);
+
+        Assert.True(requiresMuteResync);
+        Assert.Equal(before + 240, provider.AppliedDelayFrames);
+    }
 }
 
 public sealed class AdaptiveResamplerTests

@@ -4,10 +4,18 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:MultiBT.App"
+        xmlns:loc="clr-namespace:MultiBT.App.Localization"
         mc:Ignorable="d"
-        Title="MultiBT" Height="640" Width="880"
-        MinHeight="480" MinWidth="720">
+        Title="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.WindowTitle]}"
+        Icon="/Assets/multibt.ico"
+        Height="660" Width="920"
+        MinHeight="480" MinWidth="760">
 
+    <!--
+      All user-visible text is bound through Localizer rather than written inline, so the language can
+      be switched AT RUNTIME. Localizer raises PropertyChanged("Item[]"), which is what tells WPF every
+      indexer result is stale; without that the switch would silently do nothing.
+    -->
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
 
@@ -29,6 +37,16 @@
         </Style>
     </Window.Resources>
 
+    <!--
+      Ctrl+Z / Ctrl+Y step through settings snapshots. Ctrl+Shift+Z is bound as well because it is the
+      redo shortcut in many editors and users reach for it out of habit.
+    -->
+    <Window.InputBindings>
+        <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoCommand}" />
+        <KeyBinding Key="Y" Modifiers="Control" Command="{Binding RedoCommand}" />
+        <KeyBinding Key="Z" Modifiers="Control+Shift" Command="{Binding RedoCommand}" />
+    </Window.InputBindings>
+
     <Grid Margin="14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -41,8 +59,14 @@
 
         <!-- Header -->
         <StackPanel Grid.Row="0" Orientation="Horizontal">
-            <TextBlock Text="🔊 MultiBT" FontSize="20" FontWeight="Bold" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.Heading]}"
+                       FontSize="20" FontWeight="Bold" VerticalAlignment="Center" />
             <TextBlock Text="{Binding StatusText}" Margin="16,0,0,0" VerticalAlignment="Center" Foreground="#444" />
+
+            <TextBlock Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.Language]}"
+                       Margin="24,0,6,0" VerticalAlignment="Center" Foreground="#666" />
+            <ComboBox x:Name="LanguageBox" Width="120" VerticalAlignment="Center"
+                      SelectionChanged="OnLanguageSelectionChanged" />
         </StackPanel>
 
         <!-- Settings warning: corruption or a newer schema is surfaced, never swallowed -->
@@ -63,8 +87,20 @@
             <TextBlock Text="{Binding CaptureSourceWarning}" TextWrapping="Wrap" Foreground="#8A1F1A" />
         </Border>
 
+        <!--
+          Virtual-cable guidance. Without a cable the default device always plays natively and therefore
+          cannot be delayed or volume-controlled — which reads as "the primary device is out of control"
+          rather than as a missing prerequisite.
+        -->
+        <Border Grid.Row="1" Margin="0,74,0,0" Padding="10" CornerRadius="4"
+                Background="#FDECEA" BorderBrush="#D9534F" BorderThickness="1"
+                Visibility="{Binding HasVirtualCableWarning, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock Text="{Binding VirtualCableWarning}" TextWrapping="Wrap" Foreground="#8A1F1A" />
+        </Border>
+
         <!-- Device list -->
-        <GroupBox Grid.Row="2" Header="输出设备" Margin="0,12,0,0" Padding="8">
+        <GroupBox Grid.Row="2" Margin="0,12,0,0" Padding="8"
+                  Header="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Group]}">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -72,16 +108,25 @@
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                    <Button Content="刷新设备" Padding="10,4" Click="OnRefreshDevices"
-                            ToolTip="重新枚举设备，并刷新各设备的 Windows 端点音量" />
-                    <Button Content="自动对齐响度" Padding="10,4" Margin="8,0,0,0" Click="OnAutoMatchLevels"
-                            ToolTip="按各设备的 Windows 端点音量对齐响度（只衰减，不放大）。音箱灵敏度差异仍需手动微调。" />
-                    <TextBlock Text="延迟预设 (ms)：" Margin="18,0,6,0" VerticalAlignment="Center" />
+                    <Button Padding="10,4" Click="OnRefreshDevices"
+                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Refresh]}"
+                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Refresh.Tip]}" />
+                    <Button Padding="10,4" Margin="8,0,0,0" Click="OnAutoMatchLevels"
+                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.AutoMatch]}"
+                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.AutoMatch.Tip]}" />
+                    <TextBlock Margin="18,0,6,0" VerticalAlignment="Center"
+                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.LatencyPreset]}" />
                     <ComboBox x:Name="LatencyPresetBox" Width="90"
                               SelectionChanged="OnLatencyPresetChanged" />
-                    <TextBlock Text="同步模式：" Margin="18,0,6,0" VerticalAlignment="Center" />
+                    <TextBlock Margin="18,0,6,0" VerticalAlignment="Center"
+                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.SyncMode]}" />
                     <ComboBox x:Name="SyncModeBox" Width="150"
                               SelectionChanged="OnSyncModeChanged" />
+                    <TextBlock Margin="18,0,6,0" VerticalAlignment="Center"
+                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Label]}" />
+                    <ComboBox x:Name="SinkBox" Width="210" VerticalAlignment="Center"
+                              SelectionChanged="OnCaptureSinkChanged"
+                              ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Tip]}" />
                 </StackPanel>
 
                 <ListBox Grid.Row="1" x:Name="DeviceList" BorderThickness="0"
@@ -99,23 +144,18 @@
                                 </Grid.ColumnDefinitions>
 
                                 <!--
-                                  Primary (capture source) marker.
-                                  A RadioButton renders as a dot; the request was for explicit TEXT
-                                  instead, and text is also unambiguous in a screenshot or over a
-                                  remote session. The button doubles as the selector on rows that
-                                  are not primary yet.
+                                  Primary (capture source) marker, as explicit TEXT rather than a radio dot.
+                                  The button doubles as the selector on rows that are not primary yet.
                                 -->
-                                <Button Grid.Column="0"
-                                        Content="主设备"
-                                        Click="OnPrimaryDeviceClick"
-                                        ToolTip="设为主设备（捕获源），并同步切换 Windows 默认输出设备"
+                                <Button Grid.Column="0" Click="OnPrimaryDeviceClick"
+                                        Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Marker]}"
+                                        ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Tip]}"
                                         VerticalAlignment="Center" Margin="0,0,8,0" Padding="8,2"
                                         Visibility="{Binding IsPrimary, Converter={StaticResource BoolToVisibility}}" />
 
-                                <Button Grid.Column="0"
-                                        Content="设为主设备"
-                                        Click="OnPrimaryDeviceClick"
-                                        ToolTip="设为主设备（捕获源），并同步切换 Windows 默认输出设备"
+                                <Button Grid.Column="0" Click="OnPrimaryDeviceClick"
+                                        Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Set]}"
+                                        ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Tip]}"
                                         VerticalAlignment="Center" Margin="0,0,8,0" Padding="8,2"
                                         Visibility="{Binding IsNotPrimary, Converter={StaticResource BoolToVisibility}}" />
 
@@ -129,31 +169,40 @@
                                         <TextBlock Text="{Binding Status}" Margin="8,0,0,0" Foreground="#0A7" />
                                     </StackPanel>
                                     <TextBlock Text="{Binding LatencySummary}" Style="{StaticResource HintText}" />
-
-                                    <!--
-                                      The device's OWN Windows volume, shown and driven directly.
-                                      Our slider is not a multiplier on top of it any more: a multiplier
-                                      silently capped the achievable loudness (an endpoint at 61 % could
-                                      never exceed 61 % no matter where the slider sat), so "100 %" did
-                                      not mean anything. It is initialised FROM the device, so it shows
-                                      reality.
-                                    -->
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding EndpointVolumeLabel}" Style="{StaticResource HintText}" />
-                                        <Button Content="设为100%" Padding="6,1" Margin="8,0,0,0"
-                                                FontSize="10" Click="OnMaximizeEndpointVolume"
-                                                ToolTip="把该设备的 Windows 音量拉满——设备偏小时的快速做法" />
-                                    </StackPanel>
+                                    <TextBlock Text="{Binding EndpointVolumeLabel}" Style="{StaticResource HintText}" />
                                 </StackPanel>
 
-                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="设备音量" Style="{StaticResource HintText}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <StackPanel Grid.Column="3" Orientation="Vertical" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource HintText}" VerticalAlignment="Center" Margin="0,0,6,0"
+                                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Volume.Label]}" />
+                                    <!--
+                                      Drives the device's ACTUAL Windows volume, and is initialised from it, so
+                                      the slider shows reality and 100 % means 100 % of the device.
+                                    -->
                                     <Slider Width="130" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
                                             Value="{Binding EndpointVolume, Mode=TwoWay}" VerticalAlignment="Center"
                                             IsEnabled="{Binding HasEndpointVolume}"
-                                            ToolTip="该设备在 Windows 中的实际输出音量。拖动即时生效（150ms 合并写入）。" />
+                                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Volume.Tip]}" />
                                     <TextBlock Text="{Binding EndpointVolumePercent}" Width="42" Margin="6,0,0,0"
                                                VerticalAlignment="Center" TextAlignment="Right" />
+                                    </StackPanel>
+
+                                    <!--
+                                      Manual delay. Without this a device that plays early could not be
+                                      brought into line at all: compensation is computed from measurements,
+                                      and with none taken it is zero for every device, so each one simply
+                                      plays at its own natural latency.
+                                    -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                        <TextBlock Style="{StaticResource HintText}" VerticalAlignment="Center" Margin="0,0,6,0"
+                                                   Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Label]}" />
+                                        <Slider Width="140" Minimum="0" Maximum="2000" SmallChange="1" LargeChange="50"
+                                                Value="{Binding ManualOffsetMs, Mode=TwoWay}" VerticalAlignment="Center"
+                                                ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Tip]}" />
+                                        <TextBlock Text="{Binding DelayLabel}" Width="52" Margin="6,0,0,0"
+                                                   VerticalAlignment="Center" TextAlignment="Right" />
+                                    </StackPanel>
                                 </StackPanel>
                             </Grid>
                         </DataTemplate>
@@ -168,7 +217,7 @@
             <StackPanel>
                 <TextBlock Text="{Binding SystemLatencySummary}" FontWeight="SemiBold" />
                 <TextBlock Style="{StaticResource HintText}"
-                           Text="对齐到最慢的设备会把整个系统的端到端延迟设为该设备的延迟。蓝牙音箱通常在 150–400 ms，因此“全部已同步”与“能看视频”可能互斥——需要看视频时请切到 WiredOnly。" />
+                           Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[SystemLatency.Hint]}" />
             </StackPanel>
         </Border>
 
@@ -176,18 +225,22 @@
         <Border Grid.Row="4" Margin="0,8,0,0" Padding="10" CornerRadius="4"
                 Background="#F7F7F7" BorderBrush="#DDD" BorderThickness="1">
             <StackPanel>
-                <TextBlock Text="诊断（漂移修正 / 缓冲填充 / 饿死计数）" Style="{StaticResource SectionLabel}" />
+                <TextBlock Style="{StaticResource SectionLabel}"
+                           Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Diagnostics.Group]}" />
                 <TextBlock Text="{Binding DiagnosticsSummary}" Style="{StaticResource HintText}" />
             </StackPanel>
         </Border>
 
         <!-- Transport controls -->
         <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,12,0,0">
-            <Button Content="▶ 开始同步" Padding="16,6" Click="OnStart" IsEnabled="{Binding IsNotRunning}" />
-            <Button Content="■ 停止" Padding="16,6" Margin="8,0,0,0" Click="OnStop" IsEnabled="{Binding IsRunning}" />
-            <Button Content="保存设置" Padding="16,6" Margin="8,0,0,0" Click="OnSave" />
+            <Button Padding="16,6" Click="OnStart" IsEnabled="{Binding IsNotRunning}"
+                    Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Start]}" />
+            <Button Padding="16,6" Margin="8,0,0,0" Click="OnStop" IsEnabled="{Binding IsRunning}"
+                    Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Stop]}" />
+            <Button Padding="16,6" Margin="8,0,0,0" Click="OnSave"
+                    Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.Save]}" />
             <TextBlock Style="{StaticResource HintText}" Margin="16,0,0,0" VerticalAlignment="Center"
-                       Text="音频通路尚未在真机验证 —— 见 docs/SPEC.md §10 与 docs/PITFALLS.md §D。" />
+                       Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Transport.NotVerified]}" />
         </StackPanel>
     </Grid>
 </Window>

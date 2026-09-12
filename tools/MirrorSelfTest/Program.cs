@@ -303,6 +303,72 @@ internal static class Program
 
         audioSource.Start();
 
+        // ---------------------------------------------------------------- loopback volume order
+        //
+        // DECISIVE EXPERIMENT: is loopback captured BEFORE or AFTER the source endpoint's volume?
+        //
+        //   PRE  -> zeroing the endpoint volume silences the native direct path while the capture keeps
+        //           full level. The capture-source device then becomes fully controllable (delay AND
+        //           volume) with NO virtual audio cable -- which is the only way "the primary device
+        //           must not sound on its own, so we can control it" can be satisfied in software alone.
+        //   POST -> zeroing the volume zeroes the capture too, so that trick is impossible and a SILENT
+        //           sink (a spare unused output, or a virtual cable) is required instead.
+        //
+        // The original volume is restored in a finally block; the source is silent for ~1 second.
+        Console.WriteLine();
+        Console.WriteLine("[volume order] pre- or post-endpoint-volume?");
+
+        if (EndpointVolumeReader.TryRead(devices, sourceId, out double originalVolume, out bool originalMuted))
+        {
+            long bytesBefore = Interlocked.Read(ref fedBytes);
+            long signalBefore = Interlocked.Read(ref signalCallbacks);
+
+            try
+            {
+                EndpointVolumeReader.TryWrite(devices, sourceId, volumeScalar: 0.0);
+                Thread.Sleep(400);
+
+                // CONFIRM the write took effect. Without this the whole experiment rests on an
+                // unverified write, and a silently-failed write would look exactly like PRE-volume.
+                EndpointVolumeReader.TryRead(devices, sourceId, out double appliedVolume, out bool appliedMuted);
+                Console.WriteLine($"          volume actually applied: {appliedVolume * 100:0.#}% (muted={appliedMuted})");
+
+                if (appliedVolume > 0.02)
+                {
+                    Console.WriteLine("          -> INCONCLUSIVE: the volume write did not take effect.");
+                }
+
+                Thread.Sleep(900);
+
+                long deltaBytes = Interlocked.Read(ref fedBytes) - bytesBefore;
+                long deltaSignal = Interlocked.Read(ref signalCallbacks) - signalBefore;
+
+                Console.WriteLine($"          at 0% volume: {deltaBytes} bytes arrived, {deltaSignal} carrying signal");
+
+                if (deltaBytes == 0)
+                {
+                    Console.WriteLine("          -> POST-VOLUME (capture stops entirely at 0%). Silent sink required.");
+                }
+                else if (deltaSignal > 0)
+                {
+                    Console.WriteLine("          -> PRE-VOLUME. The source device CAN be fully controlled");
+                    Console.WriteLine("             (delay + volume) with no virtual audio cable.");
+                }
+                else
+                {
+                    Console.WriteLine("          -> POST-VOLUME (bytes arrive but are silent). Silent sink required.");
+                }
+            }
+            finally
+            {
+                EndpointVolumeReader.TryWrite(devices, sourceId, volumeScalar: originalVolume, muted: originalMuted);
+                Console.WriteLine($"          (restored source volume to {originalVolume * 100:0}%)");
+            }
+        }
+        else
+        {
+            Console.WriteLine("          SKIPPED: source endpoint volume not readable.");
+        }
         // ---------------------------------------------------------------- run
         if (channels.Count > 0)
         {

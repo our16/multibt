@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using MultiBT.App.Localization;
 using MultiBT.Core.Audio;
 using MultiBT.Core.Config;
 using MultiBT.Core.Devices;
@@ -63,7 +64,9 @@ public sealed class DeviceViewModel : ObservableObject
             }
         }
 
-        _isEnabled = profile is not null;
+        // Remembered. null means no explicit choice was made yet, so a device with a stored profile
+        // keeps starting enabled rather than silently switching off for existing users.
+        _isEnabled = profile is not null && Profile.Audio.Enabled != false;
         _manualOffsetMs = Profile.Latency.ManualOffsetMs;
     }
 
@@ -82,12 +85,23 @@ public sealed class DeviceViewModel : ObservableObject
         ? Endpoint.FriendlyName
         : Profile.DisplayName;
 
-    /// <summary>Transport label including the paired-but-disconnected distinction.</summary>
-    public string TransportLabel => Endpoint.IsPairedButDisconnected
-        ? $"{Endpoint.Transport} · paired, not connected"
-        : IsPrimary
-            ? $"{Endpoint.Transport} · 捕获源"
-            : Endpoint.Transport.ToString();
+    /// <summary>Transport label, localised, including the paired-but-disconnected distinction.</summary>
+    public string TransportLabel
+    {
+        get
+        {
+            string transport = Localizer.Instance[$"Transport.{Endpoint.Transport}"];
+
+            if (Endpoint.IsPairedButDisconnected)
+            {
+                return $"{transport} · {Localizer.Instance["Transport.PairedNotConnected"]}";
+            }
+
+            return IsPrimary
+                ? $"{transport} · {Localizer.Instance["Primary.Marker"]}"
+                : transport;
+        }
+    }
 
     /// <summary>Whether this device participates in the mirror.</summary>
     public bool IsEnabled
@@ -97,13 +111,19 @@ public sealed class DeviceViewModel : ObservableObject
         {
             if (SetProperty(ref _isEnabled, value))
             {
+                // Remembered as a device preference so the user does not re-tick devices every session.
+                Profile.Audio.Enabled = value;
                 IsEnabledChanged?.Invoke(this, EventArgs.Empty);
+                EnabledChangedForPersistence?.Invoke(this, EventArgs.Empty);
             }
         }
     }
 
     /// <summary>Raised when IsEnabled changes, for the engine to react immediately.</summary>
     public event EventHandler? IsEnabledChanged;
+
+    /// <summary>Raised when a preference changed that should be auto-saved.</summary>
+    public event EventHandler? EnabledChangedForPersistence;
 
     /// <summary>Whether this device is the primary capture source.</summary>
     public bool IsPrimary
@@ -165,20 +185,28 @@ public sealed class DeviceViewModel : ObservableObject
         ? "—"
         : string.Create(CultureInfo.InvariantCulture, $"{_endpointVolume * 100:0}%");
 
-    /// <summary>Labelled endpoint volume, including a mute warning when applicable.</summary>
-    public string EndpointVolumeLabel
-    {
-        get
-        {
-            if (double.IsNaN(_endpointVolume))
-            {
-                return "设备音量 未知（无法读取）";
-            }
+    /// <summary>Localised volume label including the percentage.</summary>
+    public string EndpointVolumeLabel => double.IsNaN(_endpointVolume)
+        ? Localizer.Instance["Volume.Unknown"]
+        : Localizer.Instance.Format("Volume.Display", string.Create(CultureInfo.InvariantCulture, $"{_endpointVolume * 100:0}"));
 
-            string suffix = _endpointMuted ? "（Windows 已静音）" : string.Empty;
-            return string.Create(CultureInfo.InvariantCulture, $"设备音量 {_endpointVolume * 100:0}%{suffix}");
-        }
-    }
+    /// <summary>
+    /// A warning about this device's volume, or <c>null</c> when there is nothing to report.
+    /// </summary>
+    /// <remarks>
+    /// Only problems are surfaced in the device row: the slider beside it already shows the value, so
+    /// repeating "device volume 61 %" as text would be noise. A mute or an unreadable control, on the
+    /// other hand, is exactly what the user needs told — a muted endpoint makes a provably-correct
+    /// channel completely inaudible.
+    /// </remarks>
+    public string? VolumeWarning => double.IsNaN(_endpointVolume)
+        ? Localizer.Instance["Volume.Unknown"]
+        : _endpointMuted
+            ? Localizer.Instance["Volume.MutedWarning"]
+            : null;
+
+    /// <summary>Whether <see cref="VolumeWarning"/> has something to show.</summary>
+    public bool HasVolumeProblem => VolumeWarning is not null;
 
     /// <summary>Whether this device's endpoint is muted in Windows.</summary>
     public bool EndpointMuted
@@ -201,8 +229,13 @@ public sealed class DeviceViewModel : ObservableObject
         {
             if (SetProperty(ref _manualOffsetMs, value))
             {
+                // Remembered per device: the value lives in the device profile, which is persisted with
+                // the rest of the settings.
                 Profile.Latency.ManualOffsetMs = value;
+
                 OnPropertyChanged(nameof(LatencySummary));
+                OnPropertyChanged(nameof(EffectiveDelayMs));
+                OnPropertyChanged(nameof(DelayLabel));
             }
         }
     }
@@ -217,29 +250,39 @@ public sealed class DeviceViewModel : ObservableObject
     /// </remarks>
     public double EffectiveDelayMs => LatencyModel.ComputeEffectiveDelayMs(Profile.Latency);
 
-    /// <summary>Read-only summary line for the UI.</summary>
+    /// <summary>Manual delay as shown in the UI, e.g. "125 ms".</summary>
+    public string DelayLabel => string.Create(
+        CultureInfo.InvariantCulture,
+        $"{_manualOffsetMs:0} ms");
+
+    /// <summary>Read-only summary line for the UI, localised.</summary>
     public string LatencySummary
     {
         get
         {
+            Localizer loc = Localizer.Instance;
             DeviceLatencySettings latency = Profile.Latency;
+
+            string trim = loc.Format("Latency.Trim", $"{latency.ManualOffsetMs:+0;-0;0}");
+            string effective = loc.Format("Latency.Effective", $"{EffectiveDelayMs:0}");
 
             if (!latency.HasMeasurement)
             {
-                return $"not measured · trim {latency.ManualOffsetMs:+0;-0;0} ms → {EffectiveDelayMs:0} ms";
+                return $"{loc["Latency.NotMeasured"]} · {trim} → {effective}";
             }
 
-            string stale = latency.MeasurementIsStale ? " · ⚠ measurement stale" : string.Empty;
+            string stale = latency.MeasurementIsStale ? " · " + loc["Latency.Stale"] : string.Empty;
+
             string quality = latency.MeasurementQuality switch
             {
-                MeasurementQuality.High => $"±{latency.MeasurementSpreadMs:0.0} ms",
-                MeasurementQuality.Low => $"±{latency.MeasurementSpreadMs:0.0} ms (low confidence)",
-                _ => "failed",
+                MeasurementQuality.High => $"{latency.MeasurementSpreadMs:0.0} ms",
+                MeasurementQuality.Low => $"{latency.MeasurementSpreadMs:0.0} ms ({loc["Latency.LowConfidence"]})",
+                _ => loc["Status.Failed"],
             };
 
-            return $"measured {latency.MeasuredDelayRelRefMs:0} ms {quality} · "
-                   + $"compensation {latency.CompensationMs:+0;-0;0} ms · "
-                   + $"trim {latency.ManualOffsetMs:+0;-0;0} ms → {EffectiveDelayMs:0} ms{stale}";
+            return $"{loc.Format("Latency.Measured", $"{latency.MeasuredDelayRelRefMs:0}")} ±{quality} · "
+                   + $"{loc.Format("Latency.Compensation", $"{latency.CompensationMs:+0;-0;0}")} · "
+                   + $"{trim} → {effective}{stale}";
         }
     }
 
@@ -248,6 +291,21 @@ public sealed class DeviceViewModel : ObservableObject
     {
         get => _status;
         set => SetProperty(ref _status, value);
+    }
+
+    /// <summary>
+    /// Re-raises every localised and computed property.
+    /// </summary>
+    /// <remarks>
+    /// Needed after a language switch: indexer-bound XAML updates itself, but strings composed in C#
+    /// (transport label, latency summary, status) have to be rebuilt and announced.
+    /// </remarks>
+    public void RaiseLocalisedText()
+    {
+        OnPropertyChanged(nameof(TransportLabel));
+        OnPropertyChanged(nameof(LatencySummary));
+        OnPropertyChanged(nameof(EndpointVolumeLabel));
+        OnPropertyChanged(nameof(EndpointVolumePercent));
     }
 
     /// <summary>Refreshes every computed property after the underlying settings change.</summary>

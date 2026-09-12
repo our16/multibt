@@ -531,6 +531,28 @@ public sealed class OutputChannel : IAsyncDisposable
     }
 
     /// <summary>
+    /// Applies a delay the USER asked for: always lands immediately, behind a short fade.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="ApplyDelayAsync"/>, which may glide. A glided change is inaudible but
+    /// SLOW by design (about 5 ms per second), so a slider routed through it appears to do nothing.
+    /// This path fades out, jumps, and fades back — 20 ms of fade is far less noticeable than a delay
+    /// control that takes half a minute to respond.
+    /// </remarks>
+    public async Task ApplyUserDelayAsync(double delayMs, TimeSpan fade)
+    {
+        // Stop any in-flight start-up ramp so it cannot fight this fade over the gain.
+        _rampAborted = true;
+        _startupRampActive = false;
+
+        float original = _volume.Volume;
+
+        await FadeToAsync(0f, fade).ConfigureAwait(false);
+        _delay.SetDelayMs(delayMs, out _, immediate: true);
+        await FadeToAsync(original, fade).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Applies a compensation delay on a RUNNING channel, fading around large changes.
     /// </summary>
     /// <remarks>

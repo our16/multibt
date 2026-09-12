@@ -70,6 +70,14 @@ if ($selfContained) {
     $arguments += '-p:IncludeNativeLibrariesForSelfExtract=true'
 }
 
+# Do NOT compress the bundled assemblies.
+#
+# The freshness check below works by finding this build's string literals in the produced binary.
+# Compression makes that unreliable -- some literals survive a byte scan and others do not, so the
+# check produced a false "stale" verdict. A slightly larger exe is a fair price for a check that can
+# actually be trusted.
+$arguments += '-p:EnableCompressionInSingleFile=false'
+
 & dotnet @arguments
 
 if ($LASTEXITCODE -ne 0) {
@@ -90,26 +98,34 @@ Write-Host 'Verifying the published binary is current...' -ForegroundColor Cyan
 $bytes = [System.IO.File]::ReadAllBytes($executable)
 
 # Both encodings must be searched. C# string literals land in metadata as UTF-16, while XAML
-# string literals (button labels such as "自动对齐响度") are compiled into BAML as UTF-8 -- so a
-# UTF-16-only check reports a false MISSING for anything that exists only in the UI markup.
-$asUtf16 = [System.Text.Encoding]::Unicode.GetString($bytes)
+# string literals are compiled into BAML as UTF-8 -- so a UTF-16-only check reports a false MISSING
+# for anything that exists only in the UI markup.
+#
+# UTF-16 must ALSO be scanned at BOTH alignments. Decoding the whole file from offset 0 only finds
+# literals that happen to start on an even byte; a literal at an odd offset is silently mis-decoded
+# and reported as missing, which is a false "stale preview" verdict.
+$asUtf16Even = [System.Text.Encoding]::Unicode.GetString($bytes)
+$asUtf16Odd = [System.Text.Encoding]::Unicode.GetString($bytes, 1, $bytes.Length - 1)
 $asUtf8 = [System.Text.Encoding]::UTF8.GetString($bytes)
 
 $markers = @(
-    '端点音量',        # AutoMatchLevels / device-volume status messages (C# literal)
+    '端点音量',        # device-volume status messages (C# literal)
     '主设备',          # primary-device UI text (C# literal)
-    '自动对齐响度',    # button label, XAML only -- exercises the BAML path
-    '设备音量'         # slider label + ramp, added with the volume redesign (XAML + C#)
+    '自动对齐响度',    # button label (XAML, via the localiser table)
+    '设备音量'         # slider label, added with the volume redesign
 )
 
 $missing = @()
 foreach ($marker in $markers) {
-    $inUtf16 = $asUtf16.Contains($marker)
+    $inEven = $asUtf16Even.Contains($marker)
+    $inOdd = $asUtf16Odd.Contains($marker)
     $inUtf8 = $asUtf8.Contains($marker)
 
-    if ($inUtf16 -or $inUtf8) {
-        $where = if ($inUtf16 -and $inUtf8) { 'metadata+BAML' } elseif ($inUtf16) { 'metadata' } else { 'BAML' }
-        Write-Host "  found ($where): $marker" -ForegroundColor Green
+    if ($inEven -or $inOdd -or $inUtf8) {
+        $where = @()
+        if ($inEven -or $inOdd) { $where += 'metadata' }
+        if ($inUtf8) { $where += 'BAML' }
+        Write-Host "  found ($($where -join '+')): $marker" -ForegroundColor Green
     }
     else {
         Write-Host "  MISSING: $marker" -ForegroundColor Red

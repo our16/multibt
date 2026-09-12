@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -78,13 +79,49 @@ public sealed class TrayHost : IDisposable
         _trayIcon = new TaskbarIcon
         {
             ToolTipText = "MultiBT — multi-device audio",
+
+            // LEFT click opens the window directly; RIGHT click shows the menu.
+            //
+            // Without an explicit LeftClickCommand the notification area has nothing to do on a left
+            // click, so the only way in was to discover the right-click menu — which reads as "the
+            // tray icon does nothing".
+            LeftClickCommand = new DelegateCommand(() => OpenMainWindowRequested?.Invoke(this, EventArgs.Empty)),
             DoubleClickCommand = new DelegateCommand(() => OpenMainWindowRequested?.Invoke(this, EventArgs.Empty)),
+            Icon = LoadTrayIcon(),
             ContextMenu = menu,
         };
 
         // Force the icon to materialise. Without this the icon can stay invisible until something
         // else touches it, which looks exactly like "the tray is not running".
         _trayIcon.ForceCreate(enablesEfficiencyMode: false);
+    }
+
+    /// <summary>
+    /// Loads the tray icon from the embedded multi-size .ico.
+    /// </summary>
+    /// <remarks>
+    /// Loaded from the .ico rather than via <c>ExtractAssociatedIcon</c> so Windows can choose the
+    /// frame that matches the notification area's actual size. The Result is held in a field: the tray
+    /// keeps a native handle to it, and a collected Icon would leave a blank tray slot.
+    /// </remarks>
+    private static System.Drawing.Icon? LoadTrayIcon()
+    {
+        try
+        {
+            Uri uri = new("pack://application:,,,/Assets/multibt.ico", UriKind.Absolute);
+
+            using Stream stream = Application.GetResourceStream(uri).Stream;
+
+            // 32 px is the largest frame the notification area ever needs; Windows downsamples from
+            // there for 16/20/24 px and at any DPI scale.
+            return new System.Drawing.Icon(stream, new System.Drawing.Size(32, 32));
+        }
+        catch (Exception)
+        {
+            // A missing or malformed icon must never stop the app from starting — it would just
+            // launch without a tray presence, which is worse than a generic icon.
+            return null;
+        }
     }
 
     /// <summary>Gets or sets the tray tooltip text.</summary>

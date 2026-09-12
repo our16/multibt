@@ -1,5 +1,8 @@
 using System.Collections.ObjectModel;
+using System.Windows.Input;
 using System.Windows.Threading;
+using MultiBT.App.Localization;
+using MultiBT.App.Services;
 using MultiBT.Core.Audio;
 using MultiBT.Core.Config;
 using MultiBT.Core.Devices;
@@ -34,11 +37,21 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Coalesces slider drags into one endpoint-volume write per burst.</summary>
     private readonly DispatcherTimer _volumeWriteTimer;
 
+    /// <summary>Coalesces preference changes into one settings write per burst.</summary>
+    private readonly DispatcherTimer _settingsSaveTimer;
+
+    /// <summary>Coalesces delay-slider drags into one recompute-and-apply per burst.</summary>
+    private readonly DispatcherTimer _delayWriteTimer;
+
+    /// <summary>Devices whose delay changed and still need applying.</summary>
+    private readonly HashSet<string> _pendingDelayWrites = new(StringComparer.Ordinal);
+
+    /// <summary>Snapshot history behind Ctrl+Z / Ctrl+Y.</summary>
+    private readonly SettingsHistory _history = new();
+
     /// <summary>Endpoint volumes waiting to be written, keyed by endpoint id.</summary>
     private readonly Dictionary<string, double> _pendingVolumeWrites = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Set while mirroring a read value back, so it does not queue another write.</summary>
-    private bool _suppressVolumeWrites;
 
     /// <summary>
     /// Endpoints resolved for the running engine. Kept alive deliberately: an
@@ -51,8 +64,18 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private MultiBtSettings _settings;
     private AudioEngine? _engine;
     private MMDevice? _sourceDevice;
+
+    /// <summary>
+    /// Endpoint id the engine is currently capturing, or null when stopped.
+    /// </summary>
+    /// <remarks>
+    /// Kept as the single answer to "is this device the capture source?" so no code path has to
+    /// re-derive it. Getting that wrong is not cosmetic: a device that is BOTH the source and an
+    /// output captures its own loopback and plays it back to itself, which is an audio feedback loop.
+    /// </remarks>
+    private string? _captureSourceEndpointId;
     private DeviceViewModel? _primaryDevice;
-    private string _statusText = "Idle";
+    private string _statusText = string.Empty;
     private string? _settingsWarning;
     private bool _isRunning;
     private bool _isPaused;
@@ -65,13 +88,264 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _settings = _store.Load(out string? warning);
         _settingsWarning = warning;
 
+        // Apply the remembered language BEFORE anything builds a user-visible string.
+        Localizer.Instance.SetLanguage(_settings.Ui.Language);
+
         _diagnosticsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _diagnosticsTimer.Tick += (_, _) => RefreshDiagnostics();
 
-        _volumeWriteTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _volumeWriteTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
         _volumeWriteTimer.Tick += (_, _) => FlushEndpointVolumeWrites();
 
+        _settingsSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _settingsSaveTimer.Tick += (_, _) => FlushSettingsSave();
+
+        _delayWriteTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+        _delayWriteTimer.Tick += (_, _) => FlushDelayWrites();
+
+        // Indexer-bound XAML updates itself on a language change, but strings composed in code and
+        // enum-valued pickers do not, so give them a chance to rebuild.
+        Localizer.Instance.LanguageChanged += (_, _) => OnLanguageChanged();
+
+        // Seed the history with the state we loaded, so the first Ctrl+Z returns here.
+        _history.Seed(SerializeSettings());
+
+        UndoCommand = new RelayCommand(Undo, () => _history.CanUndo);
+        RedoCommand = new RelayCommand(Redo, () => _history.CanRedo);
+
         RefreshDevices();
+    }
+
+    /// <summary>Steps the settings back one snapshot. Bound to Ctrl+Z.</summary>
+    public ICommand UndoCommand { get; }
+
+    /// <summary>Steps the settings forward one snapshot. Bound to Ctrl+Y.</summary>
+    public ICommand RedoCommand { get; }
+
+    /// <summary>Whether an undo is available.</summary>
+    public bool CanUndo => _history.CanUndo;
+
+    /// <summary>Whether a redo is available.</summary>
+    public bool CanRedo => _history.CanRedo;
+
+    /// <summary>Serialises the settings exactly as they would be persisted.</summary>
+    private string SerializeSettings() =>
+        System.Text.Json.JsonSerializer.Serialize(_settings, ProfileStore.SerializerOptions);
+
+    private void Undo()
+    {
+        if (!_history.TryUndo(out string? snapshot) || snapshot is null)
+        {
+            return;
+        }
+
+        _ = ApplySnapshotAsync(snapshot, Localizer.Instance["Status.Undone"]);
+    }
+
+    private void Redo()
+    {
+        if (!_history.TryRedo(out string? snapshot) || snapshot is null)
+        {
+            return;
+        }
+
+        _ = ApplySnapshotAsync(snapshot, Localizer.Instance["Status.Redone"]);
+    }
+
+    /// <summary>
+    /// Restores a snapshot and pushes it into the running mirror.
+    /// </summary>
+    /// <remarks>
+    /// Rebuilt through the normal paths rather than by restarting the engine: enumeration re-reads the
+    /// device records, and the volume/delay flushes push the restored values into the live channels. A
+    /// restart would work too, but it would fade every device in again for two seconds, which is not
+    /// what "quickly step back" should feel like.
+    /// </remarks>
+    private async Task ApplySnapshotAsync(string snapshot, string statusTemplate)
+    {
+        try
+        {
+            MultiBtSettings? restored = System.Text.Json.JsonSerializer.Deserialize<MultiBtSettings>(
+                snapshot,
+                ProfileStore.SerializerOptions);
+
+            if (restored is null)
+            {
+                return;
+            }
+
+            _settings = restored;
+
+            // Rebuilds the rows from the restored records and re-binds the primary.
+            RefreshDevices();
+
+            // Enabled state lives on the device record, and RefreshDevices sets it on the FIELD rather
+            // than through the property, so the channels are reconciled explicitly here.
+            foreach (DeviceViewModel device in Devices)
+            {
+                bool shouldBeEnabled = device.Profile.Audio.Enabled != false;
+
+                if (device.IsEnabled != shouldBeEnabled)
+                {
+                    device.IsEnabled = shouldBeEnabled;
+                    await OnDeviceToggledCoreAsync(device).ConfigureAwait(true);
+                }
+
+                if (device.Profile.Audio.DesiredVolume is double volume)
+                {
+                    device.EndpointVolume = volume;
+                }
+            }
+
+            FlushEndpointVolumeWrites();
+            FlushDelayWrites();
+
+            // These are read straight off the settings, so the bound pickers need telling.
+            OnPropertyChanged(nameof(EngineLatencyMs));
+            OnPropertyChanged(nameof(Mode));
+            OnPropertyChanged(nameof(Language));
+            OnPropertyChanged(nameof(CanUndo));
+            OnPropertyChanged(nameof(CanRedo));
+
+            // Persist the restored state so disk matches what is on screen.
+            _store.Save(_settings);
+
+            StatusText = statusTemplate;
+        }
+        catch (Exception ex)
+        {
+            StatusText = Localizer.Instance.Format("Status.UndoFailed", ex.Message);
+        }
+    }
+
+    /// <summary>Current UI language.</summary>
+    public UiLanguage Language => _settings.Ui.Language;
+
+    /// <summary>Render endpoints offered as capture sinks, usable virtual cables first.</summary>
+    public IReadOnlyList<AudioEndpointInfo> CaptureSinkCandidates => VirtualCableDetector.OrderForSinkPicker(
+        _devices.EnumerateRenderEndpoints(includeInactive: true));
+
+    /// <summary>The configured capture sink, or null when none is set.</summary>
+    public string? CaptureSinkEndpointId => _settings.Engine.CaptureSinkDeviceId;
+
+    /// <summary>True when no usable virtual cable is installed.</summary>
+    public bool HasNoVirtualCable => VirtualCableDetector.FindBestCaptureSink(
+        _devices.EnumerateRenderEndpoints(includeInactive: true)) is null;
+
+    /// <summary>
+    /// Points the mirror at a virtual cable and makes Windows render into it.
+    /// </summary>
+    /// <remarks>
+    /// Both halves are required. Switching the capture source alone would leave Windows still rendering
+    /// to a real speaker (which would then play natively AND receive our delayed copy — an echo), and
+    /// switching the Windows default alone would leave us capturing a device that is no longer being
+    /// rendered to. So the two are done together and the mirror is rebuilt.
+    /// </remarks>
+    public void SetCaptureSink(string? endpointId)
+    {
+        _settings.Engine.CaptureSinkDeviceId = string.IsNullOrWhiteSpace(endpointId) ? null : endpointId;
+
+        if (_settings.Engine.CaptureSinkDeviceId is string sink)
+        {
+            if (DefaultEndpointSwitcher.TrySetDefault(sink, out string? error))
+            {
+                _defaultRenderEndpointId = sink;
+                StatusText = Localizer.Instance["Status.SinkApplied"];
+            }
+            else
+            {
+                StatusText = Localizer.Instance.Format("Status.SinkSwitchFailed", error);
+            }
+        }
+        else
+        {
+            StatusText = Localizer.Instance["Status.SinkCleared"];
+        }
+
+        QueueSettingsSave();
+        OnPropertyChanged(nameof(CaptureSinkEndpointId));
+        OnPropertyChanged(nameof(HasVirtualCableWarning));
+        OnPropertyChanged(nameof(VirtualCableWarning));
+
+        if (_engine is not null)
+        {
+            _ = RestartForNewSourceAsync();
+        }
+    }
+
+    /// <summary>Explains, when no cable is installed, why some devices cannot be controlled.</summary>
+    public bool HasVirtualCableWarning => HasNoVirtualCable;
+
+    /// <summary>Actionable guidance for the virtual-cable requirement.</summary>
+    public string? VirtualCableWarning => HasNoVirtualCable
+        ? Localizer.Instance["Sink.NoCableWarning"]
+        : null;
+
+    /// <summary>Switches the UI language and remembers it.</summary>
+    public void SetLanguage(UiLanguage language)
+    {
+        if (_settings.Ui.Language == language)
+        {
+            return;
+        }
+
+        _settings.Ui.Language = language;
+        Localizer.Instance.SetLanguage(language);
+
+        QueueSettingsSave();
+        OnPropertyChanged(nameof(Language));
+    }
+
+    /// <summary>Rebuilds every string composed in code rather than bound through the indexer.</summary>
+    private void OnLanguageChanged()
+    {
+        foreach (DeviceViewModel device in Devices)
+        {
+            device.RaiseLocalisedText();
+        }
+
+        OnPropertyChanged(nameof(SystemLatencySummary));
+        OnPropertyChanged(nameof(CaptureSourceWarning));
+        OnPropertyChanged(nameof(HasCaptureSourceWarning));
+        StatusText = Localizer.Instance["Status.Idle"];
+    }
+
+    /// <summary>Queues a debounced settings write. A slider drag is not a reason to rewrite the file.</summary>
+    private void QueueSettingsSave()
+    {
+        _settingsSaveTimer.Stop();
+        _settingsSaveTimer.Start();
+    }
+
+    /// <summary>
+    /// Commits the current settings: records a history snapshot and writes the file.
+    /// </summary>
+    /// <remarks>
+    /// Auto-save and undo share this one commit point, so anything that persists is also undoable and
+    /// there is no second place to remember to update. Every settings mutation must route here.
+    /// </remarks>
+    private void FlushSettingsSave()
+    {
+        _settingsSaveTimer.Stop();
+
+        try
+        {
+            string snapshot = SerializeSettings();
+
+            // Commit records nothing when the state is unchanged, so an idempotent save does not create
+            // a history entry that would make Ctrl+Z look broken.
+            if (_history.Commit(snapshot))
+            {
+                OnPropertyChanged(nameof(CanUndo));
+                OnPropertyChanged(nameof(CanRedo));
+            }
+
+            _store.Save(_settings);
+        }
+        catch (Exception)
+        {
+            // A settings write failure must never disturb audio.
+        }
     }
 
     /// <summary>Live endpoints joined to their stored profiles.</summary>
@@ -89,6 +363,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             }
 
             _settings.Engine.EngineLatencyMs = value;
+            QueueSettingsSave();
 
             // Changing the global latency invalidates every measurement: compensation was
             // computed against the previous engine latency. See docs/SPEC.md §5.3.
@@ -116,6 +391,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             }
 
             profile.Mode = value;
+            QueueSettingsSave();
             OnPropertyChanged();
             RecomputeCompensations();
             RaiseAllDevicesChanged();
@@ -140,9 +416,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     /// <summary>Human-readable system latency warning for the UI.</summary>
-    public string SystemLatencySummary => _exceedsLipSync
-        ? $"⚠ system latency {_systemLatencyMs:0} ms — exceeds the ~125 ms lip-sync threshold, video will look out of sync"
-        : $"system latency {_systemLatencyMs:0} ms";
+    public string SystemLatencySummary => Localizer.Instance.Format(
+        _exceedsLipSync ? "SystemLatency.Warning" : "SystemLatency.Ok",
+        string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{_systemLatencyMs:0}"));
 
     public string StatusText
     {
@@ -236,6 +512,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             // takes the whole process down, and this one reconfigures live audio devices.
             device.IsEnabledChanged += (_, _) => _ = ToggleDeviceSafelyAsync(device);
 
+            // Auto-save when a device is ticked on or off.
+            device.EnabledChangedForPersistence += (_, _) => QueueSettingsSave();
+
             // Push VOLUME changes to the device's own Windows endpoint volume.
             //
             // This subscription is why the volume sliders work at all: earlier the slider updated only
@@ -246,6 +525,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 if (e.PropertyName == nameof(DeviceViewModel.EndpointVolume))
                 {
                     QueueEndpointVolumeWrite(device);
+                }
+
+                // Manual delay changes must reach the running chain AND be remembered.
+                if (e.PropertyName == nameof(DeviceViewModel.ManualOffsetMs))
+                {
+                    QueueDelayWrite(device);
                 }
             };
         }
@@ -270,6 +555,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             DeviceViewModel? preferred =
                 Devices.FirstOrDefault(d => MatchesEndpoint(d, previousPrimaryEndpointId))
+                ?? Devices.FirstOrDefault(d => d.Profile.IsPrimary)
                 ?? Devices.FirstOrDefault(d => MatchesEndpoint(d, _defaultRenderEndpointId))
                 ?? Devices.FirstOrDefault(d => d.Endpoint.IsActive);
 
@@ -286,8 +572,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RecomputeCompensations();
         RaiseAllDevicesChanged();
 
-        StatusText = $"Found {Devices.Count} render endpoint(s), "
-                     + $"{Devices.Count(d => d.Endpoint.Transport == Transport.Bluetooth)} Bluetooth.";
+        StatusText = Localizer.Instance.Format(
+            "Status.Found",
+            Devices.Count,
+            Devices.Count(d => d.Endpoint.Transport == Transport.Bluetooth));
     }
 
     /// <summary>
@@ -306,10 +594,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Actionable warning for the UI, or null when the capture source is correct.</summary>
     public string? CaptureSourceWarning => CaptureSourceIsNotDefault
-        ? $"⚠ 主设备「{_primaryDevice!.DisplayName}」不是 Windows 默认输出设备。"
-          + "MultiBT 捕获的是「主设备正在播放的声音」，而系统声音只会送到 Windows 默认设备——"
-          + "所以其他设备会完全没有声音。请把「主设备」改为 Windows 默认输出设备，"
-          + "或在 Windows 设置里把这个设备设为默认输出。"
+        ? Localizer.Instance.Format("Capture.NotDefault", _primaryDevice!.DisplayName)
         : null;
 
     public bool HasCaptureSourceWarning => CaptureSourceWarning is not null;
@@ -359,7 +644,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public void SaveSettings()
     {
         _store.Save(_settings);
-        StatusText = "Settings saved.";
+        StatusText = Localizer.Instance["Status.SettingsSaved"];
     }
 
     // ------------------------------------------------------------------ profiles
@@ -428,7 +713,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RaiseAllDevicesChanged();
         _store.Save(_settings);
 
-        StatusText = $"Profile: {profile.Name}";
+        StatusText = Localizer.Instance.Format("Status.Profile", profile.Name);
     }
 
     /// <summary>Saves the current device enable/gain/trim state into the active profile.</summary>
@@ -488,11 +773,48 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             }
         }
 
-        StatusText = paused ? "已暂停多设备输出。" : "已恢复输出。";
+        StatusText = Localizer.Instance[paused ? "Status.Paused" : "Status.Resumed"];
     }
 
     /// <summary>Toggles a device from outside the UI (the tray menu).</summary>
     public Task ToggleDeviceAsync(DeviceViewModel device) => ToggleDeviceSafelyAsync(device);
+
+    /// <summary>
+    /// Whether a device is the endpoint currently being captured.
+    /// </summary>
+    /// <remarks>
+    /// The capture source must never also be an output. Loopback captures what the endpoint is
+    /// rendering, so writing to it closes the loop and produces runaway echo — the failure this helper
+    /// exists to make impossible from every code path.
+    /// </remarks>
+    private bool IsCaptureSource(DeviceViewModel device)
+    {
+        if (string.IsNullOrEmpty(_captureSourceEndpointId))
+        {
+            return false;
+        }
+
+        return string.Equals(
+            device.Endpoint.EndpointId,
+            _captureSourceEndpointId,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Rebuilds the mirror against a newly chosen capture source.</summary>
+    private async Task RestartForNewSourceAsync()
+    {
+        try
+        {
+            // Stop first: it clears the capture-source id, so Start() re-evaluates the whole output
+            // set from scratch and the skip logic sees the new source.
+            await StopAsync().ConfigureAwait(true);
+            Start();
+        }
+        catch (Exception ex)
+        {
+            StatusText = Localizer.Instance.Format("Status.CouldNotStart", ex.Message);
+        }
+    }
 
     /// <summary>Guarded wrapper so a device failure surfaces as status text, never as a crash.</summary>
     private async Task ToggleDeviceSafelyAsync(DeviceViewModel device)
@@ -504,7 +826,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         catch (Exception ex)
         {
             device.Status = "failed";
-            StatusText = $"无法切换 {device.DisplayName}：{ex.Message}";
+            StatusText = Localizer.Instance.Format("Status.CouldNotToggle", device.DisplayName, ex.Message);
         }
     }
 
@@ -521,6 +843,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _primaryDevice = device;
+
+        // Remember the choice, and make sure only one device claims it.
+        foreach (DeviceViewModel candidate in Devices)
+        {
+            candidate.Profile.IsPrimary = ReferenceEquals(candidate, device);
+        }
+
+        QueueSettingsSave();
 
         if (device is not null)
         {
@@ -540,16 +870,28 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 if (DefaultEndpointSwitcher.TrySetDefault(device.Endpoint.EndpointId, out string? error))
                 {
                     _defaultRenderEndpointId = device.Endpoint.EndpointId;
-                    StatusText = $"主设备已设为「{device.DisplayName}」，并已同步切换 Windows 默认输出设备。";
+                    StatusText = Localizer.Instance.Format("Status.PrimarySetAndSwitched", device.DisplayName);
                 }
                 else
                 {
-                    StatusText = $"主设备已设为「{device.DisplayName}」，但切换 Windows 默认输出设备失败：{error}";
+                    StatusText = Localizer.Instance.Format("Status.PrimarySwitchFailed", device.DisplayName, error);
                 }
             }
             else
             {
-                StatusText = $"主设备已设置为: {device.DisplayName}";
+                StatusText = Localizer.Instance.Format("Status.PrimarySet", device.DisplayName);
+            }
+
+            // Apply it to a RUNNING mirror.
+            //
+            // Capture is bound at start-up, so without this the switch only took effect after a manual
+            // stop/start — which read as "setting the primary does nothing". Restarting also puts the
+            // old source back into the output set and drops the new one out of it, so the source is
+            // never also an output.
+            if (_engine is not null)
+            {
+                StatusText = Localizer.Instance.Format("Status.RestartingForSource", device.DisplayName);
+                _ = RestartForNewSourceAsync();
             }
         }
 
@@ -580,20 +922,31 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        // Apply remembered per-device volume. Deliberately here rather than during enumeration:
+        // enumeration SHOWS the device's real volume, while starting the mirror is the moment the
+        // user's stored preference should take effect.
+        foreach (DeviceViewModel remembered in Devices.Where(d => d.Profile.Audio.DesiredVolume is not null))
+        {
+            remembered.EndpointVolume = remembered.Profile.Audio.DesiredVolume!.Value;
+        }
+
+        FlushEndpointVolumeWrites();
+
         List<DeviceViewModel> selected = Devices.Where(d => d.IsEnabled).ToList();
         if (selected.Count == 0)
         {
-            StatusText = "Select at least one output device first.";
+            StatusText = Localizer.Instance["Status.SelectDevice"];
             return;
         }
 
         if (!ResolveSourceDevice(out MMDevice? source) || source is null)
         {
-            StatusText = "No render device available to mirror.";
+            StatusText = Localizer.Instance["Status.NoSource"];
             return;
         }
 
         _sourceDevice = source;
+        _captureSourceEndpointId = source.ID;
 
         // Loopback capture delivers the source endpoint's mix format, so that is the format the
         // chains must be built at. Reading it from our own client here avoids a chicken-and-egg
@@ -611,9 +964,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             foreach (DeviceViewModel device in selected)
             {
                 // Skip the capture source device - using it as output causes feedback/echo
-                if (string.Equals(device.Endpoint.EndpointId, source.ID, StringComparison.OrdinalIgnoreCase))
+                // Never open an output to the endpoint we are capturing: that is a feedback loop.
+                if (IsCaptureSource(device))
                 {
-                    device.Status = "skipped (capture source)";
+                    device.Status = Localizer.Instance["Status.DeviceSkippedSource"];
                     continue;
                 }
 
@@ -646,7 +1000,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
             if (engine.Channels.Count == 0)
             {
-                StatusText = "No device could be opened.";
+                StatusText = Localizer.Instance["Status.NoDeviceOpened"];
                 ReleaseLiveDevices();
                 return;
             }
@@ -656,12 +1010,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             IsRunning = true;
             _diagnosticsTimer.Start();
 
-            StatusText = $"Mirroring to {engine.Channels.Count} device(s) "
-                         + $"(requested latency {_settings.Engine.EngineLatencyMs} ms).";
+            StatusText = Localizer.Instance.Format("Status.Mirroring", engine.Channels.Count, _settings.Engine.EngineLatencyMs);
         }
         catch (Exception ex)
         {
-            StatusText = $"Could not start: {ex.Message}";
+            StatusText = Localizer.Instance.Format("Status.CouldNotStart", ex.Message);
             _ = engine.DisposeAsync();
             ReleaseLiveDevices();
             DisposeSourceDevice();
@@ -691,12 +1044,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
             await engine.DisposeAsync().ConfigureAwait(true);
             IsRunning = false;
-            StatusText = "Stopped.";
+            StatusText = Localizer.Instance["Status.Stopped"];
         }
 
         ReleaseLiveDevices();
         DisposeSourceDevice();
-        DiagnosticsSummary = "—";
+        _captureSourceEndpointId = null;
+        DiagnosticsSummary = Localizer.Instance["Diagnostics.None"];
     }
 
     /// <summary>Pushes chain-gain changes into the running channels.</summary>
@@ -727,7 +1081,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// </remarks>
     private void QueueEndpointVolumeWrite(DeviceViewModel device)
     {
-        if (_suppressVolumeWrites || double.IsNaN(device.EndpointVolume))
+        if (double.IsNaN(device.EndpointVolume))
         {
             return;
         }
@@ -745,27 +1099,82 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             EndpointVolumeReader.TryWrite(_devices, endpointId, volumeScalar: volume);
 
-            // Mirror the achieved value back, in case the endpoint quantised it.
-            if (EndpointVolumeReader.TryRead(_devices, endpointId, out double actual, out bool muted))
+            // Remembered as a device preference. Written here rather than on every slider tick, so a
+            // drag produces one settings write per burst instead of one per pixel.
+            DeviceViewModel? owner = Devices.FirstOrDefault(d => MatchesEndpoint(d, endpointId));
+            if (owner is not null)
             {
-                DeviceViewModel? device = Devices.FirstOrDefault(d => MatchesEndpoint(d, endpointId));
-                if (device is not null)
-                {
-                    // Assign the field directly through the property only when it really differs, so a
-                    // re-entrant write does not queue itself forever.
-                    if (Math.Abs(device.EndpointVolume - actual) > 1e-6)
-                    {
-                        _suppressVolumeWrites = true;
-                        device.EndpointVolume = actual;
-                        _suppressVolumeWrites = false;
-                    }
+                owner.Profile.Audio.DesiredVolume = volume;
+                QueueSettingsSave();
+            }
 
-                    device.EndpointMuted = muted;
-                }
+            // Refresh ONLY the mute flag.
+            //
+            // This deliberately does NOT read the achieved volume back any more. Windows quantises
+            // endpoint volume, so echoing the achieved value into the view model moved the slider thumb
+            // away from where the user was pointing; during a drag the two fought each other and the
+            // change appeared to take effect only on mouse release. The slider now shows the user's
+            // intent, which is also what the next write will send.
+            DeviceViewModel? muted = Devices.FirstOrDefault(d => MatchesEndpoint(d, endpointId));
+            if (muted is not null
+                && EndpointVolumeReader.TryRead(_devices, endpointId, out _, out bool isMuted))
+            {
+                muted.EndpointMuted = isMuted;
             }
         }
 
         _pendingVolumeWrites.Clear();
+    }
+
+    /// <summary>Queues a debounced apply of a device's manual delay.</summary>
+    private void QueueDelayWrite(DeviceViewModel device)
+    {
+        _pendingDelayWrites.Add(device.Key);
+        _delayWriteTimer.Stop();
+        _delayWriteTimer.Start();
+    }
+
+    /// <summary>
+    /// Recomputes compensations and pushes the resulting delay into the running channels.
+    /// </summary>
+    /// <remarks>
+    /// Changing one device's manual trim can change the whole alignment, so every channel is
+    /// re-evaluated rather than just the one that moved.
+    /// </remarks>
+    private void FlushDelayWrites()
+    {
+        _delayWriteTimer.Stop();
+
+        if (_pendingDelayWrites.Count == 0)
+        {
+            return;
+        }
+
+        _pendingDelayWrites.Clear();
+
+        RecomputeCompensations();
+        RaiseAllDevicesChanged();
+        QueueSettingsSave();
+
+        if (_engine is null)
+        {
+            return;
+        }
+
+        foreach (DeviceViewModel device in Devices)
+        {
+            OutputChannel? channel = _engine.Channels
+                .FirstOrDefault(c => string.Equals(c.DeviceKey, device.Key, StringComparison.Ordinal));
+
+            if (channel is not null)
+            {
+                // ApplyUserDelayAsync, NOT ApplyDelayAsync: the latter glides small changes at about
+                // 5 ms per second, which is correct for drift correction and useless for a slider.
+                _ = channel.ApplyUserDelayAsync(
+                    device.EffectiveDelayMs,
+                    TimeSpan.FromMilliseconds(EngineTunables.FadeMs));
+            }
+        }
     }
 
     /// <summary>
@@ -791,7 +1200,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         if (involved.Count == 0)
         {
-            StatusText = "无法自动对齐：没有读到任何设备的端点音量。请手动调整滑杆。";
+            StatusText = Localizer.Instance["Status.AutoMatchNone"];
             return;
         }
 
@@ -805,8 +1214,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         // Write immediately rather than waiting for the debounce: this is a deliberate one-shot action.
         FlushEndpointVolumeWrites();
 
-        StatusText = $"已把 {involved.Count} 个设备的音量统一到 {reference * 100:0}%"
-                     + "（取其中最小的一个）。音箱本身的灵敏度差异仍需手动微调滑杆。";
+        StatusText = Localizer.Instance.Format(
+            "Status.AutoMatchDone",
+            involved.Count,
+            string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{reference * 100:0}"));
     }
 
     /// <summary>
@@ -834,17 +1245,6 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    /// <summary>Raises a device's own Windows endpoint volume to 100 %.</summary>
-    public void MaximizeEndpointVolume(DeviceViewModel device)
-    {
-        ArgumentNullException.ThrowIfNull(device);
-
-        // The slider already reaches 100 %, but a single click is convenient when a device is
-        // noticeably quieter than the others.
-        device.EndpointVolume = 1.0;
-        FlushEndpointVolumeWrites();
-        StatusText = $"已将「{device.DisplayName}」的设备音量设为 100%。";
-    }
 
     /// <summary>
     /// Handles device enable/disable changes while the engine is running.
@@ -882,6 +1282,19 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        // THE FEEDBACK GUARD.
+        //
+        // This method used to create an output channel for any device the user ticked, including the
+        // one being captured. A loopback capture of a device that is also an output feeds the device's
+        // own playback back into itself, and the result is a runaway echo. Start() had this check;
+        // this path did not, so ticking the capture-source device on produced exactly that.
+        if (IsCaptureSource(device))
+        {
+            device.Status = Localizer.Instance["Status.DeviceSkippedSource"];
+            StatusText = Localizer.Instance.Format("Status.SourceCannotBeOutput", device.DisplayName);
+            return;
+        }
+
         if (!_devices.TryResolveDevice(device.Endpoint.EndpointId, out MMDevice? resolved) || resolved is null)
         {
             device.Status = "unavailable";
@@ -913,7 +1326,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             ? $"running · delay {channel.AppliedDelayMs:0} ms"
             : $"running · delay {channel.AppliedDelayMs:0} ms (resynced)";
 
-        StatusText = $"Added {device.DisplayName}. Running on {_engine.Channels.Count} device(s).";
+        StatusText = Localizer.Instance.Format("Status.Added", device.DisplayName, _engine.Channels.Count);
     }
 
     private async Task RemoveChannelFromEngineAsync(string deviceKey)
@@ -954,7 +1367,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             _liveChannelDevices.Remove(device.Endpoint.EndpointId);
         }
 
-        StatusText = $"Removed device. Running on {_engine.Channels.Count} device(s).";
+        StatusText = Localizer.Instance.Format("Status.Removed", _engine.Channels.Count);
     }
 
     /// <inheritdoc />
@@ -966,6 +1379,20 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private bool ResolveSourceDevice(out MMDevice? source)
     {
+        // Priority 0: a configured virtual cable.
+        //
+        // This outranks everything else, including the primary device. The cable is the only sink that
+        // makes EVERY speaker controllable, whereas capturing a real speaker forces us to skip it as an
+        // output — leaving that one device permanently undelayable.
+        string? sinkId = _settings.Engine.CaptureSinkDeviceId;
+        if (!string.IsNullOrEmpty(sinkId)
+            && _devices.TryResolveDevice(sinkId, out MMDevice? sink)
+            && sink is not null)
+        {
+            source = sink;
+            return true;
+        }
+
         // Priority 1: User-selected primary device
         if (_primaryDevice is not null
             && _devices.TryResolveDevice(_primaryDevice.Endpoint.EndpointId, out MMDevice? primary)
@@ -1007,7 +1434,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         // trough depth (which NAudio would otherwise hide completely), and the capture→device
         // format pair — the last being what distinguishes "this device is silent because it is
         // disconnected" from "silent because the rate conversion is broken".
-        DiagnosticsSummary = string.Join("   |   ", all.Select(d => d.Summarize()));
+        DiagnosticsSummary = string.Join("   |   ", all.Select(SummariseChannel));
 
         foreach (ChannelDiagnostics diagnostics in all)
         {
@@ -1035,6 +1462,82 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _sourceDevice = null;
     }
 
+    /// <summary>
+    /// Formats one channel's diagnostics in the current language.
+    /// </summary>
+    /// <remarks>
+    /// Lives here rather than in Core so Core stays language-neutral: a diagnostics record is data,
+    /// and only the presentation layer should know about languages.
+    /// </remarks>
+    private static string SummariseChannel(ChannelDiagnostics d)
+    {
+        Localizer loc = Localizer.Instance;
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+
+        string fill = d.HasWindowData
+            ? loc.Format(
+                "Diagnostics.Fill",
+                string.Create(invariant, $"{d.FillMinMs:0.#}"),
+                string.Create(invariant, $"{d.FillMaxMs:0.#}"))
+            : loc["Diagnostics.NoReads"];
+
+        string format = d.RequiresRateConversion
+            ? $"{d.CaptureSampleRate}→{d.DeviceSampleRate} Hz"
+            : $"{d.DeviceSampleRate} Hz";
+
+        if (d.RequiresChannelConversion)
+        {
+            format += $" {d.CaptureChannels}ch→{d.DeviceChannels}ch";
+        }
+
+        string signal = d.SignalPeak > 0.0
+            ? loc.Format("Diagnostics.Signal", string.Create(invariant, $"{(d.SignalDbFs ?? 0):0}"))
+            : loc["Diagnostics.SignalSilent"];
+
+        var flags = new System.Text.StringBuilder();
+
+        if (d.EndpointMuted)
+        {
+            flags.Append(", ").Append(loc["Diagnostics.EndpointMuted"]);
+        }
+        else if (!double.IsNaN(d.EndpointVolumeScalar) && d.EndpointVolumeScalar <= 0.001)
+        {
+            flags.Append(", ").Append(loc["Diagnostics.EndpointVolumeZero"]);
+        }
+        else if (!double.IsNaN(d.EndpointVolumeScalar) && d.EndpointVolumeScalar < 0.05)
+        {
+            flags.Append(", ").Append(loc.Format(
+                "Diagnostics.EndpointVolume",
+                string.Create(invariant, $"{d.EndpointVolumeScalar * 100:0}")));
+        }
+
+        if (d.PartialStarvedReads > 0 && d.WorstSilenceFraction > 0.01)
+        {
+            flags.Append(", ").Append(loc.Format(
+                "Diagnostics.SilenceFraction",
+                string.Create(invariant, $"{d.WorstSilenceFraction * 100:0}")));
+        }
+
+        if (d.StarvedInWindow)
+        {
+            flags.Append(", ").Append(loc["Diagnostics.Starved"]);
+        }
+
+        if (d.CorrectionSaturated)
+        {
+            flags.Append(", ").Append(loc.Format(
+                "Diagnostics.CorrectionAtLimit",
+                string.Create(invariant, $"{d.CorrectionPpm:+0;-0;0}")));
+        }
+
+        if (d.ResyncCount > 0)
+        {
+            flags.Append(", ").Append(loc.Format("Diagnostics.Resync", d.ResyncCount));
+        }
+
+        return $"{d.DeviceKey}: {d.CorrectionPpm:+0;-0;0} ppm, {fill}, {format}, {signal}{flags}";
+    }
+
     private void RaiseAllDevicesChanged()
     {
         foreach (DeviceViewModel device in Devices)
@@ -1043,3 +1546,4 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 }
+
