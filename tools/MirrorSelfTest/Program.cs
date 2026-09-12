@@ -122,7 +122,7 @@ internal static class Program
 
         int runSeconds = DefaultRunSeconds;
         string? sourceSelector = null;
-        var positionSpecs = new List<(string Match, MultiBT.Core.Sync.DevicePosition Position)>();
+        var positionSpecs = new List<(string Match, MultiBT.Core.Sync.DevicePosition Position, string Origin)>();
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -157,7 +157,31 @@ internal static class Program
                     return 1;
                 }
 
-                positionSpecs.Add((spec[..eq], new MultiBT.Core.Sync.DevicePosition(right, front, up)));
+                positionSpecs.Add((
+                    spec[..eq],
+                    new MultiBT.Core.Sync.DevicePosition(right, front, up),
+                    $"right {right:0.###}, front {front:0.###}, up {up:0.###}"));
+            }
+            else if (args[i] is "--direction" && i + 1 < args.Length)
+            {
+                // "<name substring>=<index>". Goes through the same call the direction picker in the UI makes,
+                // so what this proves is the picker's own mapping and not a hand-written position that happens
+                // to agree with it.
+                string spec = args[++i];
+                int eq = spec.IndexOf('=');
+
+                if (eq <= 0 || !int.TryParse(spec[(eq + 1)..], out int directionIndex))
+                {
+                    Console.WriteLine(
+                        $"FATAL: --direction wants '<name>=<0-{MultiBT.Core.Sync.SpatialMixer.DirectionCount - 1}>';"
+                        + $" got '{spec}'.");
+                    return 1;
+                }
+
+                positionSpecs.Add((
+                    spec[..eq],
+                    MultiBT.Core.Sync.SpatialMixer.DirectionPosition(directionIndex),
+                    $"direction {directionIndex}"));
             }
         }
 
@@ -346,7 +370,14 @@ internal static class Program
                     channel.SetSpatialGains(placement.LeftGain, placement.RightGain);
                     channel.SetSpatialDelayMs(placement.DelayMs);
 
-                    Console.WriteLine($"     position applied: L={placement.LeftGain:0.###} R={placement.RightGain:0.###} "
+                    // Named so the run says which request produced these numbers: "--direction 2" and
+                    // "--position 1,0,0" are the same placement but very different claims.
+                    string origin = positionSpecs
+                        .Where(s => target.FriendlyName.Contains(s.Match, StringComparison.OrdinalIgnoreCase))
+                        .Select(s => s.Origin)
+                        .FirstOrDefault() ?? "an unmatched spec";
+
+                    Console.WriteLine($"     position applied from {origin}: L={placement.LeftGain:0.###} R={placement.RightGain:0.###} "
                                       + $"distance delay={placement.DelayMs:0.##} ms");
                 }
 

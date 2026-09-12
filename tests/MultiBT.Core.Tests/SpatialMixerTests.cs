@@ -193,4 +193,118 @@ public sealed class SpatialMixerTests
         Assert.Equal(1.0, placements["ceiling"].LeftGain, Tolerance);
         Assert.Equal(1.0, placements["ceiling"].RightGain, Tolerance);
     }
+
+    [Fact]
+    public void EveryDirectionSitsOnTheSameCircle()
+    {
+        for (int index = 0; index < SpatialMixer.DirectionCount; index++)
+        {
+            DevicePosition position = SpatialMixer.DirectionPosition(index);
+
+            Assert.Equal(SpatialMixer.DirectionRadiusMetres, position.Distance, Tolerance);
+        }
+    }
+
+    [Fact]
+    public void DirectionZeroIsStraightAheadAndLaterIndexesTurnClockwise()
+    {
+        // 0 ahead, 2 right, 4 behind, 6 left: the order the picker presents them in.
+        DevicePosition ahead = SpatialMixer.DirectionPosition(0);
+        Assert.Equal(0.0, ahead.Right, Tolerance);
+        Assert.Equal(1.0, ahead.Front, Tolerance);
+
+        DevicePosition right = SpatialMixer.DirectionPosition(2);
+        Assert.Equal(1.0, right.Right, Tolerance);
+        Assert.Equal(0.0, right.Front, Tolerance);
+
+        DevicePosition behind = SpatialMixer.DirectionPosition(4);
+        Assert.Equal(0.0, behind.Right, Tolerance);
+        Assert.Equal(-1.0, behind.Front, Tolerance);
+
+        DevicePosition left = SpatialMixer.DirectionPosition(6);
+        Assert.Equal(-1.0, left.Right, Tolerance);
+        Assert.Equal(0.0, left.Front, Tolerance);
+
+        // The diagonals split the difference.
+        DevicePosition frontRight = SpatialMixer.DirectionPosition(1);
+        Assert.Equal(frontRight.Right, frontRight.Front, Tolerance);
+        Assert.True(frontRight.Right > 0.0);
+    }
+
+    [Fact]
+    public void ADirectionSurvivesBeingReadBackFromItsCoordinates()
+    {
+        for (int index = 0; index < SpatialMixer.DirectionCount; index++)
+        {
+            DevicePosition position = SpatialMixer.DirectionPosition(index);
+
+            Assert.Equal(index, SpatialMixer.NearestDirectionIndex(position.Right, position.Front));
+        }
+    }
+
+    /// <summary>
+    /// The point of putting every direction on one shared radius: devices that differ only by direction come
+    /// back with no delay and with their facing channel untouched. Choosing a direction can therefore neither
+    /// re-time the set nor drag the whole image down in level -- all it changes is which channel a device
+    /// leans towards.
+    /// </summary>
+    [Fact]
+    public void DevicesThatOnlyDifferByDirectionAreNeitherAttenuatedNorDelayed()
+    {
+        var positions = new Dictionary<string, DevicePosition>(StringComparer.Ordinal);
+
+        for (int index = 0; index < SpatialMixer.DirectionCount; index++)
+        {
+            positions[$"device{index}"] = SpatialMixer.DirectionPosition(index);
+        }
+
+        IReadOnlyDictionary<string, SpatialPlacement> placements = SpatialMixer.ComputePlacements(positions);
+
+        for (int index = 0; index < SpatialMixer.DirectionCount; index++)
+        {
+            SpatialPlacement placement = placements[$"device{index}"];
+            double loudest = Math.Max(placement.LeftGain, placement.RightGain);
+
+            Assert.Equal(0.0, placement.DelayMs, Tolerance);
+            Assert.True(
+                loudest >= 1.0 - Tolerance,
+                $"direction {index} peaks at {loudest}, so it lost level to a distance it does not have");
+        }
+    }
+
+    /// <summary>
+    /// A device on the right must favour the RIGHT channel. This is the check that caught an earlier version
+    /// whose trigonometry was inverted, and the picker makes it reachable from the UI rather than only from a
+    /// hand-written position.
+    /// </summary>
+    [Fact]
+    public void ThePickerDirectionsPanTowardsTheSideTheyName()
+    {
+        IReadOnlyDictionary<string, SpatialPlacement> placements = SpatialMixer.ComputePlacements(
+            new Dictionary<string, DevicePosition>
+            {
+                ["right"] = SpatialMixer.DirectionPosition(2),
+                ["left"] = SpatialMixer.DirectionPosition(6),
+                ["front-right"] = SpatialMixer.DirectionPosition(1),
+                ["behind-left"] = SpatialMixer.DirectionPosition(5),
+            });
+
+        Assert.True(placements["right"].RightGain > placements["right"].LeftGain);
+        Assert.True(placements["left"].LeftGain > placements["left"].RightGain);
+        Assert.True(placements["front-right"].RightGain > placements["front-right"].LeftGain);
+        Assert.True(placements["behind-left"].LeftGain > placements["behind-left"].RightGain);
+    }
+
+    [Fact]
+    public void ADeviceWithNoPositionReadsAsStraightAhead()
+    {
+        Assert.Equal(0, SpatialMixer.NearestDirectionIndex(0.0, 0.0));
+    }
+
+    [Fact]
+    public void DirectionIndexesWrapRatherThanBeingRejected()
+    {
+        Assert.Equal(SpatialMixer.DirectionPosition(0), SpatialMixer.DirectionPosition(SpatialMixer.DirectionCount));
+        Assert.Equal(SpatialMixer.DirectionPosition(7), SpatialMixer.DirectionPosition(-1));
+    }
 }

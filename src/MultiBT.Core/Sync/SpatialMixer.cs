@@ -70,6 +70,75 @@ public static class SpatialMixer
     /// <summary>Unity placement: full on both channels, no added delay.</summary>
     public static SpatialPlacement Unity { get; } = new(1.0, 1.0, 0.0);
 
+    /// <summary>How many directions the picker offers: the four cardinal points and the four diagonals.</summary>
+    public const int DirectionCount = 8;
+
+    /// <summary>The radius every offered direction sits on, in metres.</summary>
+    public const double DirectionRadiusMetres = 1.0;
+
+    /// <summary>
+    /// Converts a direction index into a position: 0 is straight ahead, and each step turns 45 degrees
+    /// clockwise, so 2 is the listener's right and 6 is their left.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every direction sits on the SAME circle, and that is what keeps a direction change down to a change of
+    /// pan alone. Distance delay is <c>(farthest - own) / c</c> and distance attenuation is measured against
+    /// the nearest device, so if every device is equally far, both come out at zero and unity for all of them
+    /// whatever the direction. Picking a direction therefore cannot quietly re-time the set or make a device
+    /// quieter.
+    /// </para>
+    /// <para>
+    /// No elevation: a pair of speakers cannot reproduce height, so offering "above" would only push a
+    /// device's sound sideways. The saved coordinates still carry an elevation for anyone who sets one, which
+    /// is why this returns a whole position rather than a flat pair.
+    /// </para>
+    /// </remarks>
+    /// <param name="index">Direction index; out of range values wrap, so -1 is the same as 7.</param>
+    public static DevicePosition DirectionPosition(int index)
+    {
+        double radians = WrapDirection(index) * Math.PI / 4.0;
+
+        double right = Math.Sin(radians) * DirectionRadiusMetres;
+        double front = Math.Cos(radians) * DirectionRadiusMetres;
+
+        // sin(pi) comes out as 1.2e-16, not 0. Snapping keeps a saved position the number it looks like
+        // instead of a rounding artefact, and makes the direction -> position -> direction round trip exact.
+        if (Math.Abs(right) < 1e-9)
+        {
+            right = 0.0;
+        }
+
+        if (Math.Abs(front) < 1e-9)
+        {
+            front = 0.0;
+        }
+
+        return new DevicePosition(right, front, 0.0);
+    }
+
+    /// <summary>
+    /// The direction index nearest to a horizontal position.
+    /// </summary>
+    /// <remarks>
+    /// Lets a picker with only eight answers display a position that was saved as a pair of coordinates, so
+    /// an existing set-up reads as the direction it is closest to instead of being discarded. A device nobody
+    /// has placed reads as straight ahead, which is the one direction that changes nothing about its audio.
+    /// </remarks>
+    public static int NearestDirectionIndex(double right, double front)
+    {
+        double degrees = Math.Atan2(right, front) * 180.0 / Math.PI;
+
+        return WrapDirection((int)Math.Round(degrees / 45.0, MidpointRounding.AwayFromZero));
+    }
+
+    /// <summary>Folds any index into <c>0..DirectionCount-1</c>.</summary>
+    private static int WrapDirection(int index)
+    {
+        int count = DirectionCount;
+        return ((index % count) + count) % count;
+    }
+
     /// <summary>
     /// Computes every device's placement from its position.
     /// </summary>

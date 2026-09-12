@@ -746,9 +746,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
                 // A position change re-places EVERY device, not just this one, because the distance delay is
                 // measured against the nearest device: moving one can change what another should be given.
-                if (e.PropertyName is nameof(DeviceViewModel.SpatialRight)
-                    or nameof(DeviceViewModel.SpatialFront)
-                    or nameof(DeviceViewModel.SpatialUp))
+                if (e.PropertyName == nameof(DeviceViewModel.SpatialDirectionIndex))
                 {
                     ApplySpatialPlacements();
                     QueueSettingsSave();

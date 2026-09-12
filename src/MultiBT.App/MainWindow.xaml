@@ -444,27 +444,29 @@
                                 </StackPanel>
 
                                 <!--
-                                  Position: shown as a label AND editable in place. Three narrow boxes, because
-                                  the row is a fixed 58 px and a popup or three sliders would either change that
-                                  height or add a second interaction model for one setting.
+                                  Direction: a picker, not three coordinate boxes and not free text. "Where is
+                                  this speaker" has eight answers, and every direction is the same distance
+                                  away, so one dropdown replaces what used to need a label AND three fields,
+                                  in less width and with no way to type a position that makes no sense.
                                 -->
                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
                                             Margin="0,0,18,0">
                                     <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
-                                               Text="{Binding PositionLabel}" MinWidth="96"
-                                               ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}" />
-                                    <TextBox Width="38" Margin="0,0,3,0" FontSize="11" Height="22"
-                                             VerticalContentAlignment="Center"
-                                             Text="{Binding SpatialRight, Mode=TwoWay, StringFormat={}{0:0.#}}"
-                                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}" />
-                                    <TextBox Width="38" Margin="0,0,3,0" FontSize="11" Height="22"
-                                             VerticalContentAlignment="Center"
-                                             Text="{Binding SpatialFront, Mode=TwoWay, StringFormat={}{0:0.#}}"
-                                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}" />
-                                    <TextBox Width="38" FontSize="11" Height="22"
-                                             VerticalContentAlignment="Center"
-                                             Text="{Binding SpatialUp, Mode=TwoWay, StringFormat={}{0:0.#}}"
-                                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}" />
+                                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Label]}" />
+                                    <ComboBox Width="104" Height="24" FontSize="12"
+                                              VerticalAlignment="Center"
+                                              Style="{StaticResource FieldCombo}"
+                                              SelectedIndex="{Binding SpatialDirectionIndex, Mode=TwoWay}"
+                                              ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}">
+                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.0]}" />
+                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.1]}" />
+                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.2]}" />
+                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.3]}" />
+                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.4]}" />
+                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.5]}" />
+                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.6]}" />
+                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.7]}" />
+                                    </ComboBox>
                                 </StackPanel>
 
                                 <!-- delay -->

@@ -277,67 +277,29 @@ public sealed class DeviceViewModel : ObservableObject
     /// <summary>Subtracts one step from the manual delay, stopping at zero.</summary>
     public void DecreaseDelay() => ManualOffsetMs = Math.Clamp(ManualOffsetMs - DelayStepMs, 0.0, 2000.0);
 
-    /// <summary>This device's position to the listener's right, in metres.</summary>
-    public double SpatialRight
-    {
-        get => Profile.Spatial.Right;
-        set => SetSpatial(value, Profile.Spatial.Front, Profile.Spatial.Up);
-    }
-
-    /// <summary>This device's position in front of the listener, in metres. Negative is behind.</summary>
-    public double SpatialFront
-    {
-        get => Profile.Spatial.Front;
-        set => SetSpatial(Profile.Spatial.Right, value, Profile.Spatial.Up);
-    }
-
-    /// <summary>This device's height relative to the listener, in metres.</summary>
-    public double SpatialUp
-    {
-        get => Profile.Spatial.Up;
-        set => SetSpatial(Profile.Spatial.Right, Profile.Spatial.Front, value);
-    }
-
     /// <summary>
-    /// The position as a short label, or a note that there is none.
+    /// This device's direction: 0 is straight ahead, and each step is another 45 degrees to the right.
     /// </summary>
     /// <remarks>
-    /// Shown in the row so the setting is visible rather than hidden behind an editor. A device nobody has
-    /// placed is reported as such, because "no position" is a real state and not the same as "at the origin".
+    /// <para>
+    /// An index rather than three coordinate boxes. "Where is this speaker" has eight sensible answers, and
+    /// three number fields in a 58 px row ask the question badly. The coordinates are still what gets saved:
+    /// the index is derived from them, so a position written by an older version of the app lands on the
+    /// nearest direction instead of being thrown away.
+    /// </para>
+    /// <para>
+    /// Straight ahead is the default, and for a device nobody has placed it is also the honest answer: an
+    /// unplaced device has no direction to report, and straight ahead is the direction that does nothing.
+    /// </para>
     /// </remarks>
-    public string PositionLabel
+    public int SpatialDirectionIndex
     {
-        get
+        get => SpatialMixer.NearestDirectionIndex(Profile.Spatial.Right, Profile.Spatial.Front);
+        set
         {
-            if (!Profile.Spatial.IsConfigured)
-            {
-                return Localizer.Instance["Spatial.None"];
-            }
+            DevicePosition position = SpatialMixer.DirectionPosition(value);
 
-            var parts = new List<string>();
-
-            if (Math.Abs(Profile.Spatial.Right) > 0.05)
-            {
-                parts.Add(Localizer.Instance.Format(
-                    Profile.Spatial.Right > 0 ? "Spatial.Right" : "Spatial.Left",
-                    $"{Math.Abs(Profile.Spatial.Right):0.#}"));
-            }
-
-            if (Math.Abs(Profile.Spatial.Front) > 0.05)
-            {
-                parts.Add(Localizer.Instance.Format(
-                    Profile.Spatial.Front > 0 ? "Spatial.Front" : "Spatial.Back",
-                    $"{Math.Abs(Profile.Spatial.Front):0.#}"));
-            }
-
-            if (Math.Abs(Profile.Spatial.Up) > 0.05)
-            {
-                parts.Add(Localizer.Instance.Format(
-                    Profile.Spatial.Up > 0 ? "Spatial.Up" : "Spatial.Down",
-                    $"{Math.Abs(Profile.Spatial.Up):0.#}"));
-            }
-
-            return parts.Count == 0 ? Localizer.Instance["Spatial.None"] : string.Join(" ", parts);
+            SetSpatial(position.Right, position.Front, position.Up);
         }
     }
 
@@ -360,10 +322,9 @@ public sealed class DeviceViewModel : ObservableObject
 
         Profile.Spatial.Set(right, front, up);
 
-        OnPropertyChanged(nameof(SpatialRight));
-        OnPropertyChanged(nameof(SpatialFront));
-        OnPropertyChanged(nameof(SpatialUp));
-        OnPropertyChanged(nameof(PositionLabel));
+        // One notification for one fact. The picker re-reads the direction from the coordinates, and
+        // MainViewModel re-places EVERY device on this change, because the reference distance is shared.
+        OnPropertyChanged(nameof(SpatialDirectionIndex));
     }
 
     /// <summary>Manual delay as shown in the UI, e.g. "125 ms".</summary>
