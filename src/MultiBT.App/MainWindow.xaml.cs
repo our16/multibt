@@ -145,6 +145,25 @@ public partial class MainWindow : Window
     /// The candidates come from a live endpoint enumeration rather than the device list, because the sink
     /// is not something the user listens to and is therefore not one of the output rows.
     /// </remarks>
+    /// <summary>
+    /// Short type label for one entry in the input list.
+    /// </summary>
+    /// <remarks>
+    /// A virtual cable is called out by name rather than by its transport, which would classify it as
+    /// "Other" alongside the HDMI oddities. It is the one type difference that changes what the app can do,
+    /// so it is the one worth naming.
+    /// </remarks>
+    private string DescribeInputType(AudioEndpointInfo endpoint)
+    {
+        if (VirtualCableDetector.IsVirtualCableRenderEndpoint(
+                endpoint.FriendlyName, endpoint.DeviceFriendlyName))
+        {
+            return _localizer["Input.Type.VirtualCable"];
+        }
+
+        return _localizer[$"Transport.{endpoint.Transport}"];
+    }
+
     private void RebuildCaptureSinkItems()
     {
         SinkBox.Items.Clear();
@@ -157,9 +176,15 @@ public partial class MainWindow : Window
 
         foreach (AudioEndpointInfo endpoint in _viewModel.CaptureSinkCandidates)
         {
-            // No marker for a virtual cable: it is one option among others, and flagging it would imply
-            // it is the intended answer.
-            _ = SinkBox.Items.Add(new ComboBoxItem { Content = endpoint.FriendlyName, Tag = endpoint.EndpointId });
+            // The input list carries the TYPE, because the type is what decides whether an input is worth
+            // choosing: a virtual cable makes every speaker controllable, while a real device is captured
+            // as-is and keeps playing natively. It is still only a label — nothing marks a cable as the
+            // "correct" answer.
+            _ = SinkBox.Items.Add(new ComboBoxItem
+            {
+                Content = $"{endpoint.FriendlyName}（{DescribeInputType(endpoint)}）",
+                Tag = endpoint.EndpointId,
+            });
         }
 
         string? current = _viewModel.CaptureSinkEndpointId;

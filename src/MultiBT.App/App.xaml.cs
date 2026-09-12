@@ -160,7 +160,7 @@ public partial class App : Application
             _viewModel.ActiveProfileId);
 
         _tray.UpdateDevices(
-            _viewModel.Devices.Select(d => (d.Key, d.DisplayName, d.IsEnabled, d.TransportLabel)));
+            _viewModel.Devices.Select(d => (d.Key, d.DisplayName, d.IsEnabled, d.ConnectionHint ?? string.Empty)));
 
         _tray.UpdateState(_viewModel.IsPaused, _viewModel.Devices.Count(d => d.IsEnabled));
     }

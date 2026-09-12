@@ -85,23 +85,21 @@ public sealed class DeviceViewModel : ObservableObject
         ? Endpoint.FriendlyName
         : Profile.DisplayName;
 
-    /// <summary>Transport label, localised, including the paired-but-disconnected distinction.</summary>
-    public string TransportLabel
-    {
-        get
-        {
-            string transport = Localizer.Instance[$"Transport.{Endpoint.Transport}"];
+    /// <summary>
+    /// Why a device looks present but produces nothing, or null when there is nothing to explain.
+    /// </summary>
+    /// <remarks>
+    /// Kept separate from the transport type that used to sit here. The type is a category the user can see
+    /// for themselves and no longer belongs in the output list; a paired-but-disconnected Bluetooth device
+    /// is the opposite — it is the explanation for silence, and losing it would turn an obvious cause back
+    /// into a mystery.
+    /// </remarks>
+    public string? ConnectionHint => Endpoint.IsPairedButDisconnected
+        ? Localizer.Instance["Transport.PairedNotConnected"]
+        : null;
 
-            if (Endpoint.IsPairedButDisconnected)
-            {
-                return $"{transport} · {Localizer.Instance["Transport.PairedNotConnected"]}";
-            }
-
-            return IsPrimary
-                ? $"{transport} · {Localizer.Instance["Primary.Marker"]}"
-                : transport;
-        }
-    }
+    /// <summary>Whether <see cref="ConnectionHint"/> has something to say.</summary>
+    public bool HasConnectionHint => ConnectionHint is not null;
 
     /// <summary>Whether this device participates in the mirror.</summary>
     public bool IsEnabled
@@ -134,7 +132,6 @@ public sealed class DeviceViewModel : ObservableObject
             if (SetProperty(ref _isPrimary, value))
             {
                 IsPrimaryChanged?.Invoke(this, EventArgs.Empty);
-                OnPropertyChanged(nameof(TransportLabel));
 
                 // The UI shows "主设备" on the primary row and "设为主设备" on the others, so the
                 // inverse has to notify too or both buttons end up in the wrong state.
@@ -302,7 +299,7 @@ public sealed class DeviceViewModel : ObservableObject
     /// </remarks>
     public void RaiseLocalisedText()
     {
-        OnPropertyChanged(nameof(TransportLabel));
+        OnPropertyChanged(nameof(ConnectionHint));
         OnPropertyChanged(nameof(LatencySummary));
         OnPropertyChanged(nameof(EndpointVolumeLabel));
         OnPropertyChanged(nameof(EndpointVolumePercent));

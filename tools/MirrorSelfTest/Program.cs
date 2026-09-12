@@ -120,9 +120,20 @@ internal static class Program
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-        int runSeconds = args.Length > 0 && int.TryParse(args[0], out int parsed) && parsed > 0
-            ? parsed
-            : DefaultRunSeconds;
+        int runSeconds = DefaultRunSeconds;
+        string? sourceSelector = null;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (int.TryParse(args[i], out int parsed) && parsed > 0)
+            {
+                runSeconds = parsed;
+            }
+            else if (args[i] is "--source" && i + 1 < args.Length)
+            {
+                sourceSelector = args[++i];
+            }
+        }
 
         Console.WriteLine("MultiBT mirror self-test (SILENT: plays digital silence, output gain 0)");
         Console.WriteLine(new string('=', 78));
@@ -131,22 +142,58 @@ internal static class Program
         using var devices = new DeviceManager();
 
         // ---------------------------------------------------------------- source device
-        if (!devices.TryGetDefaultRenderDevice(out MMDevice? probe) || probe is null)
-        {
-            Console.WriteLine("FATAL: no default render device; nothing to capture.");
-            return 1;
-        }
-
+        //
+        // Defaults to the Windows default output, which is the normal configuration. `--source <text>`
+        // selects another render endpoint by name instead, which is how the virtual-cable path gets
+        // tested WITHOUT repointing the machine's default output: this tool renders into whatever source
+        // it picks, so the cable receives audio and its loopback carries it, exactly as it would in
+        // normal use - while everything the user is actually listening to stays where it is.
         string sourceId;
         string sourceName;
         WaveFormat probeFormat;
 
-        using (probe)
+        if (sourceSelector is null)
         {
-            sourceId = probe.ID;
-            sourceName = probe.FriendlyName;
-            using AudioClient client = probe.CreateAudioClient();
+            if (!devices.TryGetDefaultRenderDevice(out MMDevice? probe) || probe is null)
+            {
+                Console.WriteLine("FATAL: no default render device; nothing to capture.");
+                return 1;
+            }
+
+            using (probe)
+            {
+                sourceId = probe.ID;
+                sourceName = probe.FriendlyName;
+                using AudioClient client = probe.CreateAudioClient();
+                probeFormat = client.MixFormat;
+            }
+        }
+        else
+        {
+            AudioEndpointInfo? match = devices
+                .EnumerateRenderEndpoints(includeInactive: false)
+                .FirstOrDefault(e => e.FriendlyName.Contains(sourceSelector, StringComparison.OrdinalIgnoreCase));
+
+            if (match is null)
+            {
+                Console.WriteLine($"FATAL: no active render endpoint matches '--source {sourceSelector}'.");
+                Console.WriteLine("       Active endpoints:");
+
+                foreach (AudioEndpointInfo e in devices.EnumerateRenderEndpoints(includeInactive: false))
+                {
+                    Console.WriteLine($"         {e.FriendlyName}");
+                }
+
+                return 1;
+            }
+
+            using MMDevice selected = Resolve(devices, match.EndpointId);
+            sourceId = selected.ID;
+            sourceName = selected.FriendlyName;
+            using AudioClient client = selected.CreateAudioClient();
             probeFormat = client.MixFormat;
+
+            Console.WriteLine($"[source] selected by '--source {sourceSelector}'");
         }
 
         Console.WriteLine();

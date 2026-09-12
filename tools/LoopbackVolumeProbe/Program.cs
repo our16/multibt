@@ -46,21 +46,48 @@ internal static class Program
         Console.WriteLine(new string('=', 72));
         Console.WriteLine();
 
-        using var devices = new DeviceManager();
+        // Arguments are parsed and reported BEFORE any device is touched, so a selector that did not arrive
+        // is obvious rather than silently measuring the wrong device.
+        string? deviceSelector = null;
 
-        if (!devices.TryGetDefaultRenderDevice(out MMDevice? defaultDevice) || defaultDevice is null)
+        for (int i = 0; i + 1 < args.Length; i++)
         {
-            Console.WriteLine("FAIL: no default render endpoint.");
-            return 1;
+            if (string.Equals(args[i], "--device", StringComparison.OrdinalIgnoreCase))
+            {
+                deviceSelector = args[i + 1];
+            }
         }
 
-        string endpointId = defaultDevice.ID;
-        string name = defaultDevice.FriendlyName;
-        defaultDevice.Dispose();
+        Console.WriteLine($"args     : {(args.Length == 0 ? "(none)" : string.Join(' ', args))}");
+        Console.WriteLine();
 
-        if (args.Length >= 2 && args[0] == "--device")
+        using var devices = new DeviceManager();
+
+        string endpointId;
+        string name;
+
+        if (deviceSelector is null)
         {
-            endpointId = args[1];
+            if (!devices.TryGetDefaultRenderDevice(out MMDevice? defaultDevice) || defaultDevice is null)
+            {
+                Console.WriteLine("FAIL: no default render endpoint.");
+                return 1;
+            }
+
+            endpointId = defaultDevice.ID;
+            name = defaultDevice.FriendlyName;
+            defaultDevice.Dispose();
+        }
+        else if (devices.TryResolveDevice(deviceSelector, out MMDevice? chosen) && chosen is not null)
+        {
+            endpointId = chosen.ID;
+            name = chosen.FriendlyName;
+            chosen.Dispose();
+        }
+        else
+        {
+            Console.WriteLine($"FAIL: no render endpoint with id '{deviceSelector}'.");
+            return 1;
         }
 
         Console.WriteLine($"endpoint : {name}");
@@ -202,27 +229,23 @@ internal static class Program
     {
         // Loopback capture delivers the device's mix format, so that is the format the tone must be
         // generated in: shared-mode WASAPI does not resample and rejects a mismatched format.
+        //
+        // The tone is generated as plain 32-bit float at the device's rate and channel count — the same
+        // thing the engine's own chain hands its player (see AdaptiveResampler). The device's mix format is
+        // usually WAVE_FORMAT_EXTENSIBLE wrapping float, and NAudio's SampleToWaveProvider requires the
+        // plain IeeeFloat tag, so passing the mix format through is rejected outright.
         WaveFormat mix;
         using (AudioClient probe = playbackDevice.CreateAudioClient())
         {
             mix = probe.MixFormat;
         }
 
+        Console.WriteLine($"mix      : {mix.SampleRate} Hz, {mix.Channels} ch, {mix.BitsPerSample} bit, {mix.Encoding}");
         var tone = new ToneSource(WaveFormat.CreateIeeeFloatWaveFormat(mix.SampleRate, mix.Channels));
-
-        if (mix.Encoding == WaveFormatEncoding.IeeeFloat && mix.BitsPerSample == 32)
-        {
-            playbackSource = new SampleToWaveProvider(tone);
-        }
-        else
-        {
-            // Rare on Windows 11 (the mix is almost always 32-bit float), but not impossible.
-            Console.WriteLine($"note     : mix format is {mix.Encoding}/{mix.BitsPerSample}-bit, converting via ACM");
-            playbackSource = new WaveFormatConversionProvider(mix, new SampleToWaveProvider(tone));
-        }
+        playbackSource = new SampleToWaveProvider(tone);
 
         // WasapiOut is obsolete in NAudio 3.x and warns; WasapiPlayer is the supported path and is what
-        // the engine itself uses, so the probe measures the same stack the product does.
+        // the engine itself uses.
         return new WasapiPlayerBuilder()
             .WithDevice(playbackDevice)
             .WithSharedMode()
@@ -376,7 +399,15 @@ internal static class Program
         {
             double window = 0.0;
 
-            if (_format.Encoding == WaveFormatEncoding.IeeeFloat && _format.BitsPerSample == 32)
+            // 32-bit float, whether tagged plainly or wrapped in WAVE_FORMAT_EXTENSIBLE. Loopback capture
+            // reports the EXTENSIBLE form, so testing only for IeeeFloat would match neither branch below
+            // and every measurement would come back as -inf dBFS — the tool would report "silent" forever
+            // while looking like it worked.
+            bool isFloat32 = _format.BitsPerSample == 32
+                && (_format.Encoding == WaveFormatEncoding.IeeeFloat
+                    || _format.Encoding == WaveFormatEncoding.Extensible);
+
+            if (isFloat32)
             {
                 int count = buffer.Length / 4;
                 for (int i = 0; i < count; i++)

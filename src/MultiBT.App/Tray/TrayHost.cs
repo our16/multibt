@@ -165,15 +165,17 @@ public sealed class TrayHost : IDisposable
 
     /// <summary>Rebuilds the device submenu with checkable entries.</summary>
     /// <param name="devices">Device key, display name, enabled flag and transport label.</param>
-    public void UpdateDevices(IEnumerable<(string Key, string Name, bool IsEnabled, string Transport)> devices)
+    public void UpdateDevices(IEnumerable<(string Key, string Name, bool IsEnabled, string Hint)> devices)
     {
         _devicesMenu.Items.Clear();
 
-        foreach ((string key, string name, bool isEnabled, string transport) in devices)
+        foreach ((string key, string name, bool isEnabled, string hint) in devices)
         {
             var item = new MenuItem
             {
-                Header = $"{name}  ({transport})",
+                // The hint is optional and says why a device is silent, so it is appended only when it has
+                // something to say. The transport TYPE no longer appears next to an output at all.
+                Header = string.IsNullOrEmpty(hint) ? name : $"{name}  ({hint})",
                 IsCheckable = true,
                 IsChecked = isEnabled,
             };
