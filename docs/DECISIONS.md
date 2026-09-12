@@ -122,3 +122,97 @@ Windows Audio Engine ──► 虚拟声卡（第三方）──► PCM
 
 采样率与声道差异统一在**用户态**处理（`AdaptiveResampler` 已实现），
 不要指望驱动去做格式转换。
+
+---
+
+## ADR-003：多设备输出引擎不绑定任何虚拟声卡品牌
+
+**状态**：已采纳
+
+### 背景
+
+需求原话：**「不要把 MultiBT Engine 写死成 VB-CABLE」**。
+
+这很容易在不经意间违反。VB-CABLE 是当前唯一装得上的方案，所以「引擎从 CABLE 取音频」这种写法
+最省事，也最容易被写进字段类型、构造参数、选择逻辑里。一旦写进去，VB-CABLE 就从**一个可替换的
+依赖**变成**产品的隐含前提**——换 VoiceMeeter、换 Virtual Audio Cable、或者将来换成自研驱动，
+都要动引擎本体。
+
+### 决策
+
+输入侧抽象为一个接口：`IAudioInputBackend`。
+
+```csharp
+public interface IAudioInputBackend : IDisposable
+{
+    string Description { get; }
+    AudioInputKind Kind { get; }
+    WaveFormat Format { get; }
+    event AudioDataAvailableHandler? DataAvailable;
+    event EventHandler<Exception?>? Stopped;
+    void Start();
+    void Stop();
+}
+```
+
+三个实现，对应三种**机制**而不是三个设置项：
+
+| 实现 | 机制 | 状态 |
+| --- | --- | --- |
+| `NativeLoopbackBackend` | 系统端点的 loopback 捕获 | 已实现 |
+| `VirtualCableBackend` | 第三方虚拟声卡 render 端点的 loopback 捕获 | 已实现 |
+| `VirtualAudioDriverBackend` | 自研驱动暴露的 **capture** 端点 | 占位，抛 `NotSupportedException` |
+
+### 接口为什么是「给我 PCM」而不是「做一次 loopback」
+
+命名上刻意不叫 `ILoopbackCapture`。前两者在 WASAPI 下机制相同（都是对某个 render 端点做 loopback），
+**区别只在于捕获哪个端点、以及为什么那个端点是对的**；而自研驱动走的是**普通 capture 流**，
+是真正不同的机制。把接口定义成「给我 PCM」，第三种实现才不需要改动接口，也不需要改动引擎。
+
+### 品牌认识在哪里
+
+只在一个地方：`MainViewModel.BuildInputBackend`。
+
+```text
+VirtualCableDetector 判断「这个端点是不是虚拟声卡」──► 选 Backend
+                                                        │
+AudioEngine 只看到 IAudioInputBackend ◄─────────────────┘
+```
+
+- 判断「是不是虚拟声卡」属于 `VirtualCableDetector`（已识别 VB-CABLE / VoiceMeeter / VAC）；
+- `AudioEngine` 的类型、字段、构造参数里**没有任何品牌字样**；
+- `VirtualCableBackend` 会**拒绝**非虚拟声卡端点。把真扬声器当声卡捕获，会导致该扬声器
+  「系统原生播放 + 我们的延迟副本」双重发声，这种故障宁可**启动前报错**，不要事后排查。
+
+### 所有权契约（容易写错的地方）
+
+`IAudioInputBackend` **拥有**它内部的端点，`Dispose()` 负责释放。所有权在 **`AudioEngine.Start()`
+真正被调用时才转移**。
+
+这不是形式主义。构造 backend 与启动引擎之间隔着「构建各设备输出链」，那一步会抛异常
+（设备被拔掉、端点拒绝某个格式）。引擎**无法释放一个从未交给它的 backend**，
+所以失败的启动路径必须由调用方释放——否则捕获端点会一直开到这个进程结束。
+`MainViewModel._pendingBackend` 就是为此存在的。
+
+### 防回归
+
+`tests/MultiBT.Core.Tests/AudioInputBackendTests.cs` 用反射把这条约束固化下来，不需要音频硬件：
+
+- `AudioEngine.Start` 的参数类型必须是 `IAudioInputBackend`；
+- `AudioEngine` 的任何成员名、构造参数名**不得**包含 cable / vb-audio / voicemeeter / vac；
+- 该命名空间下不得存在品牌命名的类型；
+- 占位实现必须**大声失败**（`Start()` 抛异常并指向 ADR-001），
+  且 `Stop()` / `Dispose()` **必须不抛**——拆除路径是无条件调用的，
+  在那里抛异常会把真正的错误替换成拆除错误。
+
+### 后果
+
+- 换声卡、换驱动 = **换一个 backend 实现**，引擎与 UI 不动；
+- 引擎可以脱离虚拟声卡运行（`NativeLoopbackBackend`，能同步大部分设备）；
+- 代价是多了一层间接，以及一次所有权交接需要维护。
+
+### 待验证（**不要当成已知事实**）
+
+`VirtualAudioDriverBackend` 只是**形状**，不是实现。将来若真做驱动，需要确认：
+capture 端点的格式协商是否与 loopback 一致、是否需要额外的时钟对齐、以及
+Windows 是否会把这个 capture 端点计入默认设备切换的影响范围。

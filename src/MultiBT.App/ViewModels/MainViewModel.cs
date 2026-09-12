@@ -63,7 +63,18 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string? _defaultRenderEndpointId;
     private MultiBtSettings _settings;
     private AudioEngine? _engine;
-    private MMDevice? _sourceDevice;
+
+    /// <summary>
+    /// A capture backend built for this start attempt but not yet handed to the engine.
+    /// </summary>
+    /// <remarks>
+    /// A backend owns the endpoint inside it, and ownership passes to <see cref="AudioEngine"/> only when
+    /// <c>Start</c> is actually reached. Channel construction sits between building the backend and starting
+    /// the engine, and it can throw — a device that vanished, a format the endpoint refuses. The engine
+    /// cannot dispose a backend it was never given, so without this field such a failure leaked the
+    /// capture endpoint for the life of the process.
+    /// </remarks>
+    private IAudioInputBackend? _pendingBackend;
 
     /// <summary>
     /// Endpoint id the engine is currently capturing, or null when stopped.
@@ -816,6 +827,28 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Chooses the input backend for a resolved endpoint.
+    /// </summary>
+    /// <remarks>
+    /// A virtual cable gets the cable backend, which validates that the endpoint really is one; everything
+    /// else is plain loopback. No brand is named here either — the decision is "is this endpoint a cable?",
+    /// answered by <see cref="VirtualCableDetector"/>, so replacing or removing the cable changes nothing
+    /// else in the application.
+    /// </remarks>
+    private static IAudioInputBackend BuildInputBackend(MMDevice source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        bool isCable = VirtualCableDetector.IsVirtualCableRenderEndpoint(
+            source.FriendlyName,
+            source.DeviceFriendlyName);
+
+        return isCable
+            ? new VirtualCableBackend(source)
+            : new NativeLoopbackBackend(source);
+    }
+
     /// <summary>Guarded wrapper so a device failure surfaces as status text, never as a crash.</summary>
     private async Task ToggleDeviceSafelyAsync(DeviceViewModel device)
     {
@@ -945,7 +978,25 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        _sourceDevice = source;
+        // Which backend to use is decided HERE and nowhere else. This is the only place in the
+        // application that knows a virtual cable might be involved; the engine learns nothing about it.
+        IAudioInputBackend backend;
+
+        try
+        {
+            backend = BuildInputBackend(source);
+        }
+        catch (Exception ex)
+        {
+            // A refused backend (e.g. asked to treat a real speaker as a cable) has already released the
+            // device it was given, so there is nothing to clean up beyond reporting.
+            StatusText = Localizer.Instance.Format("Status.CouldNotStart", ex.Message);
+            return;
+        }
+
+        // Ownership of the backend — and of the endpoint inside it — is held here until the engine is
+        // actually started, because the channel construction below can throw.
+        _pendingBackend = backend;
         _captureSourceEndpointId = source.ID;
 
         // Loopback capture delivers the source endpoint's mix format, so that is the format the
@@ -1005,7 +1056,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 return;
             }
 
-            engine.Start(source);
+            engine.Start(backend);
+
+            // The engine owns the backend from here on; it disposes it in DisposeAsync.
+            _pendingBackend = null;
             _engine = engine;
             IsRunning = true;
             _diagnosticsTimer.Start();
@@ -1017,7 +1071,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             StatusText = Localizer.Instance.Format("Status.CouldNotStart", ex.Message);
             _ = engine.DisposeAsync();
             ReleaseLiveDevices();
-            DisposeSourceDevice();
+            DisposePendingBackend();
         }
     }
 
@@ -1048,7 +1102,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         ReleaseLiveDevices();
-        DisposeSourceDevice();
+        DisposePendingBackend();
         _captureSourceEndpointId = null;
         DiagnosticsSummary = Localizer.Instance["Diagnostics.None"];
     }
@@ -1271,7 +1325,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private async Task AddChannelToEngineAsync(DeviceViewModel device)
     {
-        if (_engine is null || _sourceDevice is null)
+        // Guarded on the engine actually running. This used to test a ViewModel-held source device;
+        // after the backend refactor that field no longer exists, and testing a stale flag here made
+        // the method return early — ticking a device on while mirroring did nothing at all.
+        if (_engine is null || !_engine.IsRunning)
         {
             return;
         }
@@ -1303,10 +1360,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         _liveChannelDevices[device.Endpoint.EndpointId] = resolved;
 
-        WaveFormat captureFormat;
-        using (AudioClient probe = _sourceDevice.CreateAudioClient())
+        // Take the format from the RUNNING engine rather than re-probing the source device. The engine's
+        // format is exactly what the existing chains were built at, and it avoids this class holding a
+        // second reference to a device the backend already owns.
+        if (_engine.CaptureFormat is not WaveFormat captureFormat)
         {
-            captureFormat = probe.MixFormat;
+            return;
         }
 
         var channel = new OutputChannel(
@@ -1456,10 +1515,31 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _liveChannelDevices.Clear();
     }
 
-    private void DisposeSourceDevice()
+    /// <summary>
+    /// Releases a backend that was built but never handed to the engine.
+    /// </summary>
+    /// <remarks>
+    /// A no-op on the normal path, because a successful start clears the field. It exists for the runs
+    /// that never reach <c>Start</c>: a channel that could not be built, or a stop before start.
+    /// </remarks>
+    private void DisposePendingBackend()
     {
-        _sourceDevice?.Dispose();
-        _sourceDevice = null;
+        IAudioInputBackend? pending = _pendingBackend;
+        _pendingBackend = null;
+
+        if (pending is null)
+        {
+            return;
+        }
+
+        try
+        {
+            pending.Dispose();
+        }
+        catch (Exception)
+        {
+            // Releasing the capture endpoint must not become a start/stop failure of its own.
+        }
     }
 
     /// <summary>

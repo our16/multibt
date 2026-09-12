@@ -32,7 +32,11 @@ public sealed class AudioEngine : IAsyncDisposable
     private volatile OutputChannel[] _snapshot = [];
     private readonly ConcurrentDictionary<string, RecoveryPolicy> _recoveryPolicies = new();
     private readonly ConcurrentDictionary<string, Task> _pendingRecoveries = new();
-    private AudioSource? _source;
+    /// <summary>
+    /// The audio input. Deliberately an interface, not a concrete loopback or a specific cable — see
+    /// IAudioInputBackend for why the engine must not know which it has.
+    /// </summary>
+    private IAudioInputBackend? _backend;
     private Timer? _controlTimer;
     private int _tickInProgress;
     private bool _disposed;
@@ -56,7 +60,7 @@ public sealed class AudioEngine : IAsyncDisposable
     }
 
     /// <summary>True while capture is running.</summary>
-    public bool IsRunning => _source is not null;
+    public bool IsRunning => _backend is not null;
 
     /// <summary>Format of the captured stream, or <c>null</c> when stopped.</summary>
     public WaveFormat? CaptureFormat { get; private set; }
@@ -89,27 +93,28 @@ public sealed class AudioEngine : IAsyncDisposable
     /// <summary>
     /// Starts capture from a freshly resolved render endpoint and starts every channel.
     /// </summary>
-    /// <param name="sourceDevice">
-    /// Freshly resolved <c>MMDevice</c> for the endpoint to mirror. Do not pass a cached one.
+    /// <param name="backend">
+    /// Where PCM comes from. The engine treats every backend identically and never inspects its kind.
     /// </param>
-    public void Start(MMDevice sourceDevice)
+    public void Start(IAudioInputBackend backend)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentNullException.ThrowIfNull(sourceDevice);
+        ArgumentNullException.ThrowIfNull(backend);
 
         Stop();
 
-        _source = new AudioSource(sourceDevice);
-        _source.DataAvailable += OnDataAvailable;
-        _source.Stopped += OnCaptureStopped;
-        CaptureFormat = _source.WaveFormat;
+        // The engine takes ownership of the backend, and therefore of whatever device it holds.
+        _backend = backend;
+        _backend.DataAvailable += OnDataAvailable;
+        _backend.Stopped += OnCaptureStopped;
+        CaptureFormat = _backend.Format;
 
         foreach (OutputChannel channel in Channels)
         {
             channel.Start();
         }
 
-        _source.Start();
+        _backend.Start();
 
         TimeSpan period = TimeSpan.FromSeconds(1.0 / EngineTunables.ControlTickHz);
         _controlTimer = new Timer(_ => ControlTick(), null, period, period);
@@ -121,15 +126,15 @@ public sealed class AudioEngine : IAsyncDisposable
         _controlTimer?.Dispose();
         _controlTimer = null;
 
-        if (_source is not null)
+        if (_backend is not null)
         {
-            _source.DataAvailable -= OnDataAvailable;
-            _source.Stopped -= OnCaptureStopped;
+            _backend.DataAvailable -= OnDataAvailable;
+            _backend.Stopped -= OnCaptureStopped;
 
             // Stop the input FIRST so the chains stop being fed before they are torn down.
-            _source.Stop();
-            _source.Dispose();
-            _source = null;
+            _backend.Stop();
+            _backend.Dispose();
+            _backend = null;
         }
 
         CaptureFormat = null;

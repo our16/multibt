@@ -1,8 +1,8 @@
 # MultiBT 开发进度
 
-> 最后更新：2026-09-12 16:27
-> 本轮：音量改为**滑杆直接控制设备实际音量**（初始化即读取真实值）+ **启动淡入**（不再一上来就大声）+
-> 重新发布 preview。
+> 最后更新：2026-09-12 17:26
+> 本轮：**输入侧抽象** —— 引擎不再认识任何虚拟声卡品牌（ADR-003）；
+> 抽象过程中暴露出两个真实缺陷（开关设备静默失效、失败启动泄漏端点），已一并修复。
 
 ---
 
@@ -640,6 +640,86 @@ dotnet run --project tools/MirrorSelfTest/MirrorSelfTest.csproj
 
 ---
 
+## 🎯 输入侧抽象：引擎不认识「VB-CABLE」这个词
+
+需求原话：**「不要把 MultiBT Engine 写死成 VB-CABLE」**。
+
+### 做了什么
+
+输入侧从「引擎自己去捕获某个端点」改成**引擎接收一个 PCM 来源**：
+
+```csharp
+public interface IAudioInputBackend : IDisposable   // 新增
+```
+
+| 实现 | 机制 | 状态 |
+| --- | --- | --- |
+| `NativeLoopbackBackend` | 系统端点 loopback | 已实现 |
+| `VirtualCableBackend` | 第三方虚拟声卡 loopback（会校验端点**真的是**声卡） | 已实现 |
+| `VirtualAudioDriverBackend` | 自研驱动的 capture 端点 | 占位，大声抛异常 |
+
+品牌只出现在**一个地方**：`MainViewModel.BuildInputBackend`。
+`AudioEngine` 的类型、字段、构造参数里没有任何品牌字样——这一条现在由**反射测试**守着。
+完整理由见 `docs/DECISIONS.md` **ADR-003**。
+
+### 🔴 抽象过程中暴露的缺陷 1：勾选设备**完全无效**
+
+`AddChannelToEngineAsync` 的守卫是：
+
+```csharp
+if (_engine is null || _sourceDevice is null) return;   // 旧
+```
+
+`_sourceDevice` 是 ViewModel 自己持有的 `MMDevice`。抽象之后端点归 backend 所有，
+这个字段被置空**且再也不会被赋值**——于是守卫**永远为真**，
+运行中途勾选任何设备都会静默 return：**没有任何报错，就是没反应**。
+
+这正是上一轮「手动调节延迟没用」同一类的坑：**静默的提前返回**。
+
+修复：守卫改为跟随引擎真实状态——`if (_engine is null || !_engine.IsRunning)`。
+
+### 🔴 抽象过程中暴露的缺陷 2：启动失败会**泄漏捕获端点**
+
+构造 backend 与调用 `engine.Start(backend)` 之间隔着「构建各设备输出链」，
+那一步会抛异常（设备被拔掉、端点拒绝格式）。旧代码靠 `DisposeSourceDevice()` 兜底。
+
+问题在于：**引擎无法释放一个从未交给它的 backend**。失败路径上 `_sourceDevice` 已经是 null，
+于是捕获端点会一直开到这个进程结束。
+
+修复：新增 `_pendingBackend` 字段显式表达**所有权交接**——
+
+```text
+BuildInputBackend ──► _pendingBackend = backend      （此时由 ViewModel 负责释放）
+engine.Start(backend) ──► _pendingBackend = null     （此时由引擎负责释放）
+```
+
+任何未走到 `Start` 的退出路径都调用 `DisposePendingBackend()`。
+
+顺带修掉 `NativeLoopbackBackend` 构造函数自身的泄漏：`new AudioSource(...)` 抛异常时
+端点无人释放，现在 catch 里先 `renderDevice.Dispose()` 再 rethrow。
+
+### 防回归：把约束写成测试
+
+`tests/MultiBT.Core.Tests/AudioInputBackendTests.cs`（新增 8 个测试，**不需要音频硬件**）：
+
+- `AudioEngine.Start` 的参数类型必须是 `IAudioInputBackend`；
+- `AudioEngine` 的任何成员名/构造参数名不得包含 `cable` / `vb-audio` / `voicemeeter` / `vac`；
+- 该命名空间下不得出现品牌命名的类型；
+- 占位实现必须**大声失败**（`Start()` 抛异常并指向 ADR-001），
+  且 `Stop()` / `Dispose()` **必须不抛**——拆除路径是无条件调用的。
+
+**负向对照已做过**：故意往 `AudioEngine` 里塞一个 `_vbCableScratch` 字段，
+品牌守卫测试立刻失败；移除后恢复通过。**测试确实能失败**，不是摆设。
+
+### 本轮验证
+
+```text
+dotnet build MultiBT.slnx   → 已成功生成，0 个警告
+dotnet test  MultiBT.slnx   → 通过 118，失败 0   （110 → 118，本轮 +8）
+```
+
+---
+
 ## 里程碑
 
 | 里程碑 | 内容 | 状态 |
@@ -657,6 +737,7 @@ dotnet run --project tools/MirrorSelfTest/MirrorSelfTest.csproj
 | M10 | 诊断面板 | ✅ 完成（本轮补上格式诊断） |
 | M11 | 延迟诚实 UI | ✅ 完成 |
 | M12 | 声学自动对齐 | ⏳ 信号与门限已实现；端到端待验证 |
+| M13 | 输入侧后端抽象（引擎不绑定声卡品牌） | ✅ 完成（ADR-003，含反射防回归测试） |
 
 ---
 
@@ -677,6 +758,9 @@ dotnet run --project tools/MirrorSelfTest/MirrorSelfTest.csproj
 | 用途 | 位置 |
 |---|---|
 | 音频链构造（**采样率转换在此**） | `src/MultiBT.Core/Audio/OutputChannel.cs` 构造函数 |
+| **输入侧契约（引擎只认这一层）** | `src/MultiBT.Core/Audio/IAudioInputBackend.cs` |
+| **三种输入后端实现** | `src/MultiBT.Core/Audio/AudioInputBackends.cs` |
+| **唯一选择后端的地方（品牌只在此处）** | `src/MultiBT.App/ViewModels/MainViewModel.cs` → `BuildInputBackend` |
 | 漂移控制律 | `src/MultiBT.Core/Sync/DriftController.cs` |
 | 可调速重采样（漂移执行机构） | `src/MultiBT.Core/Audio/AdaptiveResampler.cs` |
 | 格式/缓冲诊断 | `src/MultiBT.Core/Audio/RingDiagnostics.cs` |
