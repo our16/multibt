@@ -21,12 +21,3 @@
 *.zip   binary
 *.png   binary
 *.ico   binary
-
-# Vendored driver sources keep their own line endings; they are C/C++ built by the WDK, not by our
-# .NET tooling, and re-normalising them would create noise in every diff against upstream.
-driver/**/*.cpp  -text
-driver/**/*.h    -text
-driver/**/*.inx  -text
-driver/**/*.rc   -text
-driver/**/*.vcxproj -text
-driver/**/*.bat  -text
