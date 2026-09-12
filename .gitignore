@@ -32,3 +32,7 @@ desktop.ini
 ## Runtime config (never commit user profiles / calibration data)
 profiles.json
 profiles.corrupt-*.json
+
+# Scratch: downloaded artefacts used to verify a third-party driver or release.
+# Never committed - these are binaries, and they are re-downloadable.
+.scratch/

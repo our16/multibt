@@ -244,6 +244,28 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _devices.EnumerateRenderEndpoints(includeInactive: true)) is null;
 
     /// <summary>
+    /// Where the audio currently comes from, in one line, for the status area.
+    /// </summary>
+    /// <remarks>
+    /// The cable is chosen automatically and without ceremony, so the choice has to be VISIBLE. An automatic
+    /// decision whose result is not shown is indistinguishable from a capture that quietly found nothing —
+    /// and the symptom of both is silence.
+    /// </remarks>
+    public string AudioInputSummary
+    {
+        get
+        {
+            AudioEndpointInfo? sink = VirtualCableDetector.ResolveSourceSink(
+                _devices.EnumerateRenderEndpoints(includeInactive: true),
+                _settings.Engine.CaptureSinkDeviceId);
+
+            return sink is null
+                ? Localizer.Instance["Input.None"]
+                : Localizer.Instance.Format("Input.Detected", sink.FriendlyName);
+        }
+    }
+
+    /// <summary>
     /// Points the mirror at a virtual cable and makes Windows render into it.
     /// </summary>
     /// <remarks>
@@ -277,6 +299,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(CaptureSinkEndpointId));
         OnPropertyChanged(nameof(HasVirtualCableWarning));
         OnPropertyChanged(nameof(VirtualCableWarning));
+        OnPropertyChanged(nameof(AudioInputSummary));
 
         if (_engine is not null)
         {
@@ -828,6 +851,51 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     /// <summary>
+    /// Makes Windows render system audio into the resolved source, when that source is a virtual cable.
+    /// </summary>
+    /// <remarks>
+    /// The two halves of a cable setup must agree: we capture the cable's render endpoint, so Windows has
+    /// to be rendering into that same endpoint. Doing only one half produces the two classic failures —
+    /// capture a cable nobody renders into (silence), or switch the default without following it (the old
+    /// default speaker keeps playing natively, so it is heard twice, once delayed).
+    /// </remarks>
+    /// <returns>A message describing a failure, or null when routing is already correct.</returns>
+    private string? EnsureWindowsRendersIntoSource(MMDevice source)
+    {
+        // Only a virtual cable needs this. A real endpoint is already whatever the user chose as default,
+        // and switching it would be an unrequested change to their system.
+        if (!VirtualCableDetector.IsVirtualCableRenderEndpoint(source.FriendlyName, source.DeviceFriendlyName))
+        {
+            return null;
+        }
+
+        // Asked of Windows rather than of the cached id: the user may have changed the default in Sound
+        // settings since we last looked, and acting on a stale answer is how the "heard twice" failure
+        // happens.
+        bool alreadyDefault = false;
+
+        if (_devices.TryGetDefaultRenderDevice(out MMDevice? current) && current is not null)
+        {
+            alreadyDefault = string.Equals(current.ID, source.ID, StringComparison.OrdinalIgnoreCase);
+            current.Dispose();
+        }
+
+        if (alreadyDefault)
+        {
+            _defaultRenderEndpointId = source.ID;
+            return null;
+        }
+
+        if (DefaultEndpointSwitcher.TrySetDefault(source.ID, out string? error))
+        {
+            _defaultRenderEndpointId = source.ID;
+            return null;
+        }
+
+        return Localizer.Instance.Format("Status.SinkSwitchFailed", error);
+    }
+
+    /// <summary>
     /// Chooses the input backend for a resolved endpoint.
     /// </summary>
     /// <remarks>
@@ -978,6 +1046,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        // Starting is the moment Windows has to be told to render into the cable, and it is the only
+        // moment it is safe to do so: switching at launch would hijack the machine's audio routing before
+        // the user asked for anything. Without this the cable receives nothing, so every output would be
+        // silent — and it would look like a broken mirror rather than a routing step that never happened.
+        string? routingFailure = EnsureWindowsRendersIntoSource(source);
+
         // Which backend to use is decided HERE and nowhere else. This is the only place in the
         // application that knows a virtual cable might be involved; the engine learns nothing about it.
         IAudioInputBackend backend;
@@ -1064,7 +1138,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             IsRunning = true;
             _diagnosticsTimer.Start();
 
-            StatusText = Localizer.Instance.Format("Status.Mirroring", engine.Channels.Count, _settings.Engine.EngineLatencyMs);
+            // A routing failure must survive as the visible message: the mirror is running, but nothing can
+            // reach it, and "mirroring N devices" would read as success.
+            StatusText = routingFailure
+                ?? Localizer.Instance.Format("Status.Mirroring", engine.Channels.Count, _settings.Engine.EngineLatencyMs);
         }
         catch (Exception ex)
         {
@@ -1438,17 +1515,24 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private bool ResolveSourceDevice(out MMDevice? source)
     {
-        // Priority 0: a configured virtual cable.
+        // Priority 0: a virtual cable — configured by the user, or simply detected.
         //
         // This outranks everything else, including the primary device. The cable is the only sink that
         // makes EVERY speaker controllable, whereas capturing a real speaker forces us to skip it as an
         // output — leaving that one device permanently undelayable.
-        string? sinkId = _settings.Engine.CaptureSinkDeviceId;
-        if (!string.IsNullOrEmpty(sinkId)
-            && _devices.TryResolveDevice(sinkId, out MMDevice? sink)
-            && sink is not null)
+        //
+        // Detection is deliberate rather than requiring a choice: a virtual cable is an implementation
+        // detail of "one stream to many speakers", and asking the user to pick one asks them to know
+        // something they have no reason to know.
+        AudioEndpointInfo? sink = VirtualCableDetector.ResolveSourceSink(
+            _devices.EnumerateRenderEndpoints(includeInactive: true),
+            _settings.Engine.CaptureSinkDeviceId);
+
+        if (sink is not null
+            && _devices.TryResolveDevice(sink.EndpointId, out MMDevice? sinkDevice)
+            && sinkDevice is not null)
         {
-            source = sink;
+            source = sinkDevice;
             return true;
         }
 

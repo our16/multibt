@@ -125,6 +125,55 @@ public static class VirtualCableDetector
         return endpoints.FirstOrDefault(IsUsableCaptureSink);
     }
 
+    /// <summary>
+    /// Decides which endpoint should be the capture source, without asking the user.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The user is not expected to know what a virtual cable is, so the sink is resolved rather than
+    /// configured: a virtual cable that is present is simply used. That is the whole point of the cable in
+    /// this design — it is an implementation detail of "one audio stream to many speakers", not a setting.
+    /// </para>
+    /// <para>
+    /// An explicitly configured sink still wins, because the user may deliberately point the mirror at a
+    /// particular cable when several are installed. If that endpoint has disappeared — uninstalled, renamed
+    /// by a reinstall, or currently disabled — the choice falls back to auto-detection instead of failing,
+    /// so a cable upgrade does not leave the app stuck on a missing device.
+    /// </para>
+    /// <para>
+    /// Returns null when no cable is available, which is NOT an error: the mirror then captures a real
+    /// endpoint, and the caller reports that some devices cannot be controlled.
+    /// </para>
+    /// </remarks>
+    /// <param name="renderEndpoints">
+    /// Render endpoints to choose from. Must be the RENDER side: a cable's own capture side is never a sink,
+    /// because Windows cannot render audio into it.
+    /// </param>
+    /// <param name="configuredSinkId">The user's explicit choice, or null to auto-detect.</param>
+    public static AudioEndpointInfo? ResolveSourceSink(
+        IEnumerable<AudioEndpointInfo> renderEndpoints,
+        string? configuredSinkId)
+    {
+        ArgumentNullException.ThrowIfNull(renderEndpoints);
+
+        List<AudioEndpointInfo> endpoints = [.. renderEndpoints];
+
+        if (!string.IsNullOrWhiteSpace(configuredSinkId))
+        {
+            AudioEndpointInfo? configured = endpoints.FirstOrDefault(
+                e => string.Equals(e.EndpointId, configuredSinkId, StringComparison.OrdinalIgnoreCase));
+
+            // Only honour it if it is still a usable cable: a configured id that has since become a real
+            // speaker (device roles change) would otherwise divert audio into a speaker twice.
+            if (configured is not null && IsUsableCaptureSink(configured))
+            {
+                return configured;
+            }
+        }
+
+        return FindBestCaptureSink(endpoints);
+    }
+
     private static bool Matches(string? text, string[] markers)
     {
         if (string.IsNullOrWhiteSpace(text))

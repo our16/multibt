@@ -127,6 +127,9 @@
                     <ComboBox x:Name="SinkBox" Width="210" VerticalAlignment="Center"
                               SelectionChanged="OnCaptureSinkChanged"
                               ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Tip]}" />
+                    <TextBlock Margin="8,0,0,0" VerticalAlignment="Center" Opacity="0.75"
+                               Text="{Binding AudioInputSummary}"
+                               ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Input.Tip]}" />
                     <Button Padding="8,3" Margin="6,0,0,0" Click="OnGetVirtualCable"
                             Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable]}"
                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable.Tip]}" />

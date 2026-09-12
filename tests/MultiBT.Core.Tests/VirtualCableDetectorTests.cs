@@ -16,12 +16,26 @@ public sealed class VirtualCableDetectorTests
 {
     private static AudioEndpointInfo Endpoint(string name, bool active = true, string transport = "") =>
         new(
-            "{0.0.0.00000000}.{id}",
-            @"SWD\MMDEVAPI\{0.0.0.00000000}.{id}",
+            Id(name),
+            @"SWD\MMDEVAPI\" + Id(name),
             name,
             transport.Length == 0 ? name : transport,
             Transport.Other,
             active);
+
+    /// <summary>
+    /// A stable, unique endpoint id per name.
+    /// </summary>
+    /// <remarks>
+    /// Uniqueness is load-bearing, not cosmetic. These tests resolve a sink BY ID, so a helper that handed
+    /// every endpoint the same id would let a test pass while the code picked an entirely different device —
+    /// the assertions would be checking nothing.
+    /// </remarks>
+    private static string Id(string name)
+    {
+        byte[] hash = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(name));
+        return "{0.0.0.00000000}.{" + new Guid(hash).ToString().ToUpperInvariant() + "}";
+    }
 
     [Theory]
     [InlineData("CABLE Input (VB-Audio Virtual Cable)")]
@@ -110,5 +124,96 @@ public sealed class VirtualCableDetectorTests
         // silently send system audio to a device the user hears twice.
         Assert.Null(VirtualCableDetector.FindBestCaptureSink(
             [Endpoint("扬声器 (Realtek High Definition Audio)"), Endpoint("耳机 (MI Portable Speaker)")]));
+    }
+
+    [Theory]
+    // A real device on this machine whose name contains "Virtual Audio Device". It is an HDMI audio
+    // endpoint, and treating it as a sink would divert all system audio into a silent output.
+    [InlineData("NVIDIA Virtual Audio Device (Wave Extensible) (WDM)")]
+    [InlineData("Virtual Audio Device")]
+    [InlineData("NVIDIA Virtual Audio Device")]
+    public void DoesNotTreatVirtualAudioDeviceAsACable(string name)
+    {
+        Assert.False(VirtualCableDetector.IsVirtualCableRenderEndpoint(name));
+        Assert.False(VirtualCableDetector.IsUsableCaptureSink(Endpoint(name)));
+    }
+
+    [Fact]
+    public void ResolveSourceSinkDetectsACableWithoutBeingAsked()
+    {
+        AudioEndpointInfo cable = Endpoint("CABLE Input (VB-Audio Virtual Cable)");
+
+        // No explicit choice: the cable is found on its own. This is the behaviour that makes the input
+        // something the user never has to configure.
+        AudioEndpointInfo? resolved = VirtualCableDetector.ResolveSourceSink(
+            [Endpoint("扬声器 (Realtek High Definition Audio)"), cable],
+            configuredSinkId: null);
+
+        Assert.NotNull(resolved);
+        Assert.Equal(cable.EndpointId, resolved.EndpointId);
+    }
+
+    [Fact]
+    public void ResolveSourceSinkPrefersAnExplicitChoice()
+    {
+        AudioEndpointInfo cable = Endpoint("CABLE Input (VB-Audio Virtual Cable)");
+        AudioEndpointInfo voiceMeeter = Endpoint("VoiceMeeter Input (VB-Audio VoiceMeeter VAIO)");
+
+        AudioEndpointInfo? resolved = VirtualCableDetector.ResolveSourceSink(
+            [cable, voiceMeeter],
+            configuredSinkId: voiceMeeter.EndpointId);
+
+        Assert.NotNull(resolved);
+        Assert.Equal(voiceMeeter.EndpointId, resolved.EndpointId);
+    }
+
+    [Fact]
+    public void ResolveSourceSinkRecoversWhenTheConfiguredCableIsGone()
+    {
+        AudioEndpointInfo replacement = Endpoint("CABLE Input (VB-Audio Virtual Cable)");
+
+        // The configured cable was uninstalled or renamed by a reinstall. Falling back to detection keeps
+        // the app working instead of leaving it pointed at a device that no longer exists.
+        AudioEndpointInfo? resolved = VirtualCableDetector.ResolveSourceSink(
+            [replacement],
+            configuredSinkId: "{0.0.0.00000000}.{uninstalled-cable}");
+
+        Assert.NotNull(resolved);
+        Assert.Equal(replacement.EndpointId, resolved.EndpointId);
+    }
+
+    [Fact]
+    public void ResolveSourceSinkIgnoresAConfiguredEndpointThatBecameARealSpeaker()
+    {
+        AudioEndpointInfo speaker = Endpoint("扬声器 (Realtek High Definition Audio)");
+        AudioEndpointInfo cable = Endpoint("CABLE Input (VB-Audio Virtual Cable)");
+
+        // Endpoint ids outlive the device that had them, and a stale id can now belong to a real speaker.
+        // Honouring it would capture a speaker while it also plays natively - heard twice, once delayed.
+        AudioEndpointInfo? resolved = VirtualCableDetector.ResolveSourceSink(
+            [speaker, cable],
+            configuredSinkId: speaker.EndpointId);
+
+        Assert.NotNull(resolved);
+        Assert.Equal(cable.EndpointId, resolved.EndpointId);
+    }
+
+    [Fact]
+    public void ResolveSourceSinkReturnsNullWhenThereIsNoCable()
+    {
+        // Null is not an error: it means the mirror falls back to capturing a real endpoint, and the UI
+        // reports that not every device can be controlled.
+        Assert.Null(VirtualCableDetector.ResolveSourceSink(
+            [Endpoint("扬声器 (Realtek High Definition Audio)"), Endpoint("耳机 (MI Portable Speaker)")],
+            configuredSinkId: null));
+    }
+
+    [Fact]
+    public void ResolveSourceSinkIgnoresAnInactiveCable()
+    {
+        // Present but disabled: capturing it would yield silence, so it must not be auto-selected.
+        Assert.Null(VirtualCableDetector.ResolveSourceSink(
+            [Endpoint("CABLE Input (VB-Audio Virtual Cable)", active: false)],
+            configuredSinkId: null));
     }
 }
