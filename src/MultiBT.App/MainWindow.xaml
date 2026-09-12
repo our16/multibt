@@ -103,6 +103,83 @@
             </Setter>
         </Style>
 
+        <!--
+          Dropdowns styled to sit beside the buttons: same height, same border colour, same corner radius.
+          They were using the platform default chrome, which is what made the toolbar look assembled from
+          two different applications.
+        -->
+        <Style x:Key="FieldCombo" TargetType="ComboBox">
+            <Setter Property="Height" Value="30" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="8,0,4,0" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <Border x:Name="Bd" CornerRadius="7" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <ContentPresenter Grid.Column="0" Margin="{TemplateBinding Padding}"
+                                                      VerticalAlignment="Center"
+                                                      Content="{TemplateBinding SelectionBoxItem}"
+                                                      ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                      ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" />
+
+                                    <!-- typed text support: editable combos are not used here, but the part
+                                         must exist or the template is invalid -->
+                                    <TextBlock Grid.Column="0" Margin="{TemplateBinding Padding}"
+                                               VerticalAlignment="Center" Visibility="Collapsed"
+                                               Text="{TemplateBinding Text}" />
+
+                                    <Path Grid.Column="1" Margin="0,0,9,0" VerticalAlignment="Center"
+                                          Data="M0,0 L8,0 L4,5 Z" Fill="{StaticResource TextMuted}" />
+                                </Grid>
+                            </Border>
+
+                            <ToggleButton x:Name="Toggle" Focusable="False" ClickMode="Press"
+                                          Background="Transparent" BorderThickness="0"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay,
+                                                      RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent" />
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <Popup x:Name="PART_Popup" AllowsTransparency="True" Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}" Focusable="False"
+                                   PopupAnimation="Slide">
+                                <Border Background="White" CornerRadius="7" Margin="0,3,0,0"
+                                        BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
+                                        MinWidth="{TemplateBinding ActualWidth}" MaxHeight="320">
+                                    <ScrollViewer>
+                                        <ItemsPresenter />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#F3F4F6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="Card" TargetType="Border">
             <Setter Property="Background" Value="White" />
             <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
@@ -174,7 +251,7 @@
             <StackPanel Grid.Column="2" Orientation="Horizontal">
                 <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
                            Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.Language]}" />
-                <ComboBox x:Name="LanguageBox" Width="104"
+                <ComboBox x:Name="LanguageBox" Width="104" Style="{StaticResource FieldCombo}"
                           SelectionChanged="OnLanguageSelectionChanged" />
             </StackPanel>
         </Grid>
@@ -199,10 +276,30 @@
                 </Style>
             </Border.Style>
 
-            <TextBlock Style="{StaticResource OneLine}" FontSize="12"
-                       Foreground="{StaticResource NoticeText2}"
-                       Text="{Binding NoticeText}"
-                       ToolTip="{Binding NoticeText}" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!--
+                  A read-only TextBox rather than a TextBlock: it can be selected, copied with the keyboard and
+                  scrolled sideways, which a TextBlock with an ellipsis cannot. Still ONE line in a fixed-height
+                  strip, so revealing or clearing a notice still cannot move anything on the page.
+                -->
+                <TextBox x:Name="NoticeBox" Grid.Column="0" IsReadOnly="True" BorderThickness="0"
+                         Background="Transparent" Padding="0" FontSize="12" TextWrapping="NoWrap"
+                         Foreground="{StaticResource NoticeText2}"
+                         VerticalAlignment="Center" VerticalContentAlignment="Center"
+                         Text="{Binding NoticeText, Mode=OneWay}"
+                         ToolTip="{Binding NoticeText}" />
+
+                <Button x:Name="CopyNoticeButton" Grid.Column="1" Margin="8,0,0,0" Padding="8,1"
+                        Style="{StaticResource BaseButton}" FontSize="11" VerticalAlignment="Center"
+                        Click="OnCopyNotice"
+                        Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Notice.Copy]}"
+                        Visibility="{Binding HasNotice, Converter={StaticResource BoolToVisibility}}" />
+            </Grid>
         </Border>
 
         <!-- ============================ devices ============================ -->
@@ -228,29 +325,25 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
                     <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
                                Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Label]}" />
                     <ComboBox Grid.Column="1" x:Name="SinkBox" Width="230" VerticalAlignment="Center"
+                              Style="{StaticResource FieldCombo}"
                               SelectionChanged="OnCaptureSinkChanged"
                               ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.Tip]}" />
 
                     <TextBlock Grid.Column="2" Style="{StaticResource FieldLabel}" Margin="16,0,6,0"
                                Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.SyncMode]}" />
                     <ComboBox Grid.Column="3" x:Name="SyncModeBox" Width="134" VerticalAlignment="Center"
-                              SelectionChanged="OnSyncModeChanged" />
+                              Style="{StaticResource FieldCombo}" SelectionChanged="OnSyncModeChanged" />
 
                     <Button Grid.Column="5" Style="{StaticResource BaseButton}" Margin="0,0,6,0"
                             Click="OnRefreshDevices"
                             Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Refresh]}"
                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.Refresh.Tip]}" />
                     <Button Grid.Column="6" Style="{StaticResource BaseButton}" Margin="0,0,6,0"
-                            Click="OnAutoMatchLevels"
-                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.AutoMatch]}"
-                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Devices.AutoMatch.Tip]}" />
-                    <Button Grid.Column="7" Style="{StaticResource BaseButton}"
                             Click="OnGetVirtualCable"
                             Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable]}"
                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Sink.GetCable.Tip]}" />

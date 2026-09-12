@@ -5,8 +5,16 @@ namespace MultiBT.App.Recommendations;
 /// </summary>
 /// <param name="NameKey">Localisation key for the product's display name.</param>
 /// <param name="NoteKey">Localisation key for the one-line note shown beside it.</param>
-/// <param name="Url">The vendor's own page. Opened in the default browser.</param>
-public sealed record VirtualAudioRecommendation(string NameKey, string NoteKey, string Url);
+/// <param name="Url">The vendor's own page. This is the one that opens when the entry is clicked.</param>
+/// <param name="RepositoryUrl">
+/// Source repository, when the product has a public one. Offered as a submenu beside the vendor page, so the
+/// recommended link stays a single obvious click and the source is one hover away.
+/// </param>
+public sealed record VirtualAudioRecommendation(
+    string NameKey,
+    string NoteKey,
+    string Url,
+    string? RepositoryUrl = null);
 
 /// <summary>
 /// The virtual audio devices MultiBT points users at.
@@ -44,6 +52,10 @@ public static class VirtualAudioRecommendations
 
         // Open source (MIT) and free of charge, but installation needs Windows test signing, so it is
         // listed last with that stated plainly rather than presented as an easy alternative.
-        new("Recommend.MttDriver", "Recommend.MttDriver.Note", "https://github.com/VirtualDrivers/Virtual-Audio-Driver"),
+        new(
+            "Recommend.MttDriver",
+            "Recommend.MttDriver.Note",
+            "https://github.com/VirtualDrivers/Virtual-Audio-Driver",
+            "https://github.com/VirtualDrivers/Virtual-Audio-Driver"),
     ];
 }

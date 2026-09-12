@@ -229,6 +229,14 @@ public partial class MainWindow : Window
 
             string url = recommendation.Url;
             item.Click += (_, _) => OpenUrl(url);
+
+            if (recommendation.RepositoryUrl is string repo && repo != url)
+            {
+                var repoItem = new MenuItem { Header = _localizer["Recommend.Repository"] };
+                repoItem.Click += (_, _) => OpenUrl(repo);
+                _ = item.Items.Add(repoItem);
+            }
+
             menu.Items.Add(item);
         }
 
@@ -259,6 +267,32 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Copies the current notice to the clipboard.
+    /// </summary>
+    /// <remarks>
+    /// Clipboard access can fail -- another process can hold the clipboard open -- and that must not take the
+    /// application down over a copy button.
+    /// </remarks>
+    private void OnCopyNotice(object sender, RoutedEventArgs e)
+    {
+        string? text = _viewModel.NoticeText;
+
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(text);
+        }
+        catch (Exception)
+        {
+            // The clipboard was busy; the text remains selectable in the field, so there is nothing to report.
+        }
+    }
+
     private void OnCaptureSinkChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_initialising || SinkBox.SelectedItem is not ComboBoxItem item)
@@ -275,7 +309,6 @@ public partial class MainWindow : Window
         RebuildCaptureSinkItems();
     }
 
-    private void OnAutoMatchLevels(object sender, RoutedEventArgs e) => _viewModel.AutoMatchLevels();
 
 
     private void OnSyncModeChanged(object sender, SelectionChangedEventArgs e)
