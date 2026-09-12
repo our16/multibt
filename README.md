@@ -178,4 +178,19 @@ tools/
 
 ## 许可
 
-待定。
+**MIT** —— 见 [LICENSE](LICENSE)。
+
+第三方依赖同样是 MIT，没有 GPL 传染性依赖：
+
+| 依赖 | 许可 | 用途 |
+| --- | --- | --- |
+| [NAudio](https://github.com/naudio/NAudio) 3.1.0 | MIT | WASAPI 采集与播放 |
+| [H.NotifyIcon.Wpf](https://github.com/HavenDV/H.NotifyIcon) 2.4.1 | MIT | 系统托盘图标 |
+
+**MultiBT 不附带任何虚拟声卡驱动。** 程序只把你指向厂商官网（见
+`src/MultiBT.App/Recommendations/VirtualAudioRecommendations.cs`），安装与否、以什么条款安装，
+都发生在你和厂商之间 —— VB-Audio 的许可本身也不允许转发它的安装包。详见
+[docs/DECISIONS.md](docs/DECISIONS.md) 的 ADR-001 与 ADR-003。
+
+> ⚠️ 本项目**没有**借用 `README.md` 上方致谢列表中那些项目的代码：它们只是设计思路的来源。
+> 特别是 `double-headphones`（Proprietary，未发布源码）**只参考了产品行为，没有参考其代码**。
