@@ -277,6 +277,37 @@ public partial class MainWindow : Window
     /// <summary>Group fader released: the device volumes hold the result, so the fader returns to rest.</summary>
     private void OnMasterNudgeCompleted(object sender, RoutedEventArgs e) => _viewModel.EndMasterNudge();
 
+    /// <summary>Steps one device's delay down by one step.</summary>
+    private void OnDelayDown(object sender, RoutedEventArgs e) => StepDelay(sender, up: false);
+
+    /// <summary>Steps one device's delay up by one step.</summary>
+    private void OnDelayUp(object sender, RoutedEventArgs e) => StepDelay(sender, up: true);
+
+    /// <summary>
+    /// Applies one delay step to the device whose row was clicked.
+    /// </summary>
+    /// <remarks>
+    /// The button lives inside a DataTemplate, so the target device comes from the sender's DataContext rather
+    /// than from a field: there is one handler for every row, and the row it was pressed in decides which
+    /// device moves.
+    /// </remarks>
+    private static void StepDelay(object sender, bool up)
+    {
+        if (sender is not FrameworkElement { DataContext: DeviceViewModel device })
+        {
+            return;
+        }
+
+        if (up)
+        {
+            device.IncreaseDelay();
+        }
+        else
+        {
+            device.DecreaseDelay();
+        }
+    }
+
     private void OnCopyNotice(object sender, RoutedEventArgs e)
     {
         string? text = _viewModel.NoticeText;

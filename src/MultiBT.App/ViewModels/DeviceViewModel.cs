@@ -268,6 +268,104 @@ public sealed class DeviceViewModel : ObservableObject
         }
     }
 
+    /// <summary>How far one press of the delay step buttons moves the value, in ms.</summary>
+    public const double DelayStepMs = 5.0;
+
+    /// <summary>Adds one step to the manual delay, stopping at the configured maximum.</summary>
+    public void IncreaseDelay() => ManualOffsetMs = Math.Clamp(ManualOffsetMs + DelayStepMs, 0.0, 2000.0);
+
+    /// <summary>Subtracts one step from the manual delay, stopping at zero.</summary>
+    public void DecreaseDelay() => ManualOffsetMs = Math.Clamp(ManualOffsetMs - DelayStepMs, 0.0, 2000.0);
+
+    /// <summary>This device's position to the listener's right, in metres.</summary>
+    public double SpatialRight
+    {
+        get => Profile.Spatial.Right;
+        set => SetSpatial(value, Profile.Spatial.Front, Profile.Spatial.Up);
+    }
+
+    /// <summary>This device's position in front of the listener, in metres. Negative is behind.</summary>
+    public double SpatialFront
+    {
+        get => Profile.Spatial.Front;
+        set => SetSpatial(Profile.Spatial.Right, value, Profile.Spatial.Up);
+    }
+
+    /// <summary>This device's height relative to the listener, in metres.</summary>
+    public double SpatialUp
+    {
+        get => Profile.Spatial.Up;
+        set => SetSpatial(Profile.Spatial.Right, Profile.Spatial.Front, value);
+    }
+
+    /// <summary>
+    /// The position as a short label, or a note that there is none.
+    /// </summary>
+    /// <remarks>
+    /// Shown in the row so the setting is visible rather than hidden behind an editor. A device nobody has
+    /// placed is reported as such, because "no position" is a real state and not the same as "at the origin".
+    /// </remarks>
+    public string PositionLabel
+    {
+        get
+        {
+            if (!Profile.Spatial.IsConfigured)
+            {
+                return Localizer.Instance["Spatial.None"];
+            }
+
+            var parts = new List<string>();
+
+            if (Math.Abs(Profile.Spatial.Right) > 0.05)
+            {
+                parts.Add(Localizer.Instance.Format(
+                    Profile.Spatial.Right > 0 ? "Spatial.Right" : "Spatial.Left",
+                    $"{Math.Abs(Profile.Spatial.Right):0.#}"));
+            }
+
+            if (Math.Abs(Profile.Spatial.Front) > 0.05)
+            {
+                parts.Add(Localizer.Instance.Format(
+                    Profile.Spatial.Front > 0 ? "Spatial.Front" : "Spatial.Back",
+                    $"{Math.Abs(Profile.Spatial.Front):0.#}"));
+            }
+
+            if (Math.Abs(Profile.Spatial.Up) > 0.05)
+            {
+                parts.Add(Localizer.Instance.Format(
+                    Profile.Spatial.Up > 0 ? "Spatial.Up" : "Spatial.Down",
+                    $"{Math.Abs(Profile.Spatial.Up):0.#}"));
+            }
+
+            return parts.Count == 0 ? Localizer.Instance["Spatial.None"] : string.Join(" ", parts);
+        }
+    }
+
+    /// <summary>
+    /// Writes all three axes at once.
+    /// </summary>
+    /// <remarks>
+    /// One method for three properties because they are one fact: the mixer needs a position, not three
+    /// independent numbers, and notifying them separately could let a listener observe a half-applied
+    /// position -- the reference distance is shared, so a partial update is a real intermediate state.
+    /// </remarks>
+    private void SetSpatial(double right, double front, double up)
+    {
+        if (Math.Abs(Profile.Spatial.Right - right) < 0.0001
+            && Math.Abs(Profile.Spatial.Front - front) < 0.0001
+            && Math.Abs(Profile.Spatial.Up - up) < 0.0001)
+        {
+            return;
+        }
+
+        Profile.Spatial.Set(right, front, up);
+
+        OnPropertyChanged(nameof(SpatialRight));
+        OnPropertyChanged(nameof(SpatialFront));
+        OnPropertyChanged(nameof(SpatialUp));
+        OnPropertyChanged(nameof(PositionLabel));
+    }
+
     /// <summary>Manual delay as shown in the UI, e.g. "125 ms".</summary>
     public string DelayLabel => string.Create(
         CultureInfo.InvariantCulture,

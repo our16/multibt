@@ -8,8 +8,8 @@
         mc:Ignorable="d"
         Title="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.WindowTitle]}"
         Icon="/Assets/multibt.ico"
-        Height="680" Width="960"
-        MinHeight="580" MinWidth="940"
+        Height="680" Width="1220"
+        MinHeight="580" MinWidth="1160"
         Background="#F4F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI"
         TextOptions.TextFormattingMode="Display"
@@ -423,6 +423,7 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
                                 <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled, Mode=TwoWay}"
@@ -442,20 +443,57 @@
                                                Foreground="{StaticResource TextMuted}" Text="{Binding Status}" />
                                 </StackPanel>
 
-                                <!-- delay -->
+                                <!--
+                                  Position: shown as a label AND editable in place. Three narrow boxes, because
+                                  the row is a fixed 58 px and a popup or three sliders would either change that
+                                  height or add a second interaction model for one setting.
+                                -->
                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
                                             Margin="0,0,18,0">
                                     <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
+                                               Text="{Binding PositionLabel}" MinWidth="96"
+                                               ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}" />
+                                    <TextBox Width="38" Margin="0,0,3,0" FontSize="11" Height="22"
+                                             VerticalContentAlignment="Center"
+                                             Text="{Binding SpatialRight, Mode=TwoWay, StringFormat={}{0:0.#}}"
+                                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}" />
+                                    <TextBox Width="38" Margin="0,0,3,0" FontSize="11" Height="22"
+                                             VerticalContentAlignment="Center"
+                                             Text="{Binding SpatialFront, Mode=TwoWay, StringFormat={}{0:0.#}}"
+                                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}" />
+                                    <TextBox Width="38" FontSize="11" Height="22"
+                                             VerticalContentAlignment="Center"
+                                             Text="{Binding SpatialUp, Mode=TwoWay, StringFormat={}{0:0.#}}"
+                                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}" />
+                                </StackPanel>
+
+                                <!-- delay -->
+                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center"
+                                            Margin="0,0,18,0">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
                                                Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Label]}" />
-                                    <Slider Width="132" Minimum="0" Maximum="2000" SmallChange="1" LargeChange="50"
-                                            Value="{Binding ManualOffsetMs, Mode=TwoWay}" VerticalAlignment="Center"
-                                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Tip]}" />
-                                    <TextBlock Style="{StaticResource ValueText}" Width="54" Margin="6,0,0,0"
-                                               Text="{Binding DelayLabel}" />
+                                    <!--
+                                      A field rather than a slider: 0-2000 ms with about 5 ms of useful precision, so a
+                                      slider's thumb travel is coarser than the step anyone wants and an exact value
+                                      cannot be hit. The two buttons cover the common nudge.
+                                    -->
+                                    <Button Width="26" Height="24" Padding="0" FontSize="14"
+                                            Style="{StaticResource BaseButton}" Click="OnDelayDown"
+                                            Content="&#x2212;" VerticalAlignment="Center"
+                                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Down.Tip]}" />
+                                    <TextBox Width="58" Height="24" Margin="4,0,4,0" FontSize="12"
+                                             VerticalContentAlignment="Center" TextAlignment="Right"
+                                             Text="{Binding ManualOffsetMs, Mode=TwoWay, StringFormat={}{0:0}}"
+                                             ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Tip]}" />
+                                    <Button Width="26" Height="24" Padding="0" FontSize="14"
+                                            Style="{StaticResource BaseButton}" Click="OnDelayUp"
+                                            Content="+" VerticalAlignment="Center"
+                                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Delay.Up.Tip]}" />
+                                    <TextBlock Style="{StaticResource FieldLabel}" Margin="4,0,0,0" Text="ms" />
                                 </StackPanel>
 
                                 <!-- volume: drives the device's ACTUAL Windows volume, so 100 % means the device's 100 % -->
-                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center"
+                                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center"
                                             Margin="0,0,16,0">
                                     <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
                                                Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Volume.Label]}" />
@@ -468,7 +506,7 @@
                                 </StackPanel>
 
                                 <!-- Fixed width: "主设备" and "设为主设备" must not shift the sliders -->
-                                <Button Grid.Column="4" Width="86" VerticalAlignment="Center"
+                                <Button Grid.Column="5" Width="86" VerticalAlignment="Center"
                                         Style="{StaticResource BaseButton}" Padding="0,4"
                                         Click="OnPrimaryDeviceClick"
                                         ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Tip]}">

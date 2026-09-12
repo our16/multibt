@@ -99,6 +99,31 @@ if ($missingKeys.Count -gt 0) {
     exit 1
 }
 
+# The XAML references keys too, and NOTHING here used to check them: the scan above only reads .cs files.
+# That gap shipped a defect in this very version -- a step button's tooltip key was missing, so the UI
+# displayed the literal text "Delay.Down.Tip". Keys in markup are just as capable of being wrong as keys in
+# code, so both are now checked the same way.
+$xamlPath = Join-Path $root 'src/MultiBT.App/MainWindow.xaml'
+if (Test-Path $xamlPath) {
+    $xamlText = Get-Content -LiteralPath $xamlPath -Raw
+    $xamlKeys = [regex]::Matches($xamlText, 'Path=\[([A-Za-z0-9_.]+)\]') |
+        ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+
+    $missingXaml = @()
+    foreach ($key in $xamlKeys) {
+        $occurrences = ([regex]::Matches($localizerText, [regex]::Escape('["' + $key + '"]'))).Count
+        if ($occurrences -ne 2) { $missingXaml += "$key ($occurrences of 2)" }
+    }
+
+    if ($missingXaml.Count -gt 0) {
+        Write-Host 'Keys referenced from MainWindow.xaml are not defined in both language tables:' -ForegroundColor Red
+        $missingXaml | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+        Write-Host 'The UI would display the key itself rather than the text.' -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "Localisation: all $($xamlKeys.Count) XAML keys present in zh and en." -ForegroundColor Green
+}
 Write-Host "Localisation: all $($usedKeys.Count) ViewModel keys present in zh and en." -ForegroundColor Green
 
 # A running instance holds a lock on the .exe and makes the publish fail with a confusing error.
