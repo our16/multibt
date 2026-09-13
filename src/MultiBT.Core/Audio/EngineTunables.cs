@@ -98,16 +98,39 @@ public static class EngineTunables
     // ---------------------------------------------------------------- drift control
 
     /// <summary>
-    /// Maximum resampler correction magnitude, ±200 ppm = ±0.02 %.
-    /// 200 ppm is 0.35 cents — far below the 5–10 cent static pitch JND — while still
-    /// giving ~2x headroom over the ±100 ppm worst case for a pair of consumer devices.
+    /// How much correction authority the CONTROLLER may use, ±400 ppm = ±0.04 %.
     /// </summary>
-    public const double MaxCorrection = 200e-6;
+    /// <remarks>
+    /// <para>
+    /// 400 ppm is 0.7 cents — far below the 5–10 cent static pitch JND — and it is the RATE limit that keeps the
+    /// correction from turning into audible frequency modulation; the ceiling is not what does that. See
+    /// docs/PITFALLS.md B10.
+    /// </para>
+    /// <para>
+    /// This was 200 ppm, on the reasoning that ±100 ppm is the worst case for a pair of consumer devices and that
+    /// 200 gives 2x headroom over it. Measured with tools/MirrorSelfTest on real hardware, that assumption does
+    /// not hold for Bluetooth endpoints: two of four channels sat pinned at ±200 ppm for an entire run, which
+    /// means the real mismatch was at least that large and the controller had no authority left to hold the
+    /// trough at <c>f*</c>. A saturated controller is not merely a lost correction: the fill then settles wherever
+    /// the mismatch leaves it (measured: 115 ms against a 105 ms target), so devices end up tens of milliseconds
+    /// apart from EACH OTHER — which is the one thing this whole mechanism exists to prevent.
+    /// </para>
+    /// <para>
+    /// Kept apart from <see cref="MaxCorrectionHardCeiling"/> rather than merged with it: that one is the
+    /// resampler's own safety clamp, and a control bound equal to a safety bound means the safety bound never has
+    /// anything to catch.
+    /// </para>
+    /// </remarks>
+    public const double MaxCorrection = 400e-6;
 
     /// <summary>
-    /// Hard ceiling if a device proves to need more authority than <see cref="MaxCorrection"/>.
-    /// AudioHQ ships ±0.5 % (= 8.63 cents) and calls it inaudible; we prefer the tighter bound.
+    /// The resampler's own hard clamp on the ratio it will apply, ±500 ppm.
     /// </summary>
+    /// <remarks>
+    /// A backstop rather than a control bound: it exists so that a bug in the controller cannot reach the
+    /// resampler as an extreme ratio. AudioHQ ships ±0.5 % (= 8.63 cents) and calls it inaudible; there is no
+    /// reason to go near that and this stays an order of magnitude below it.
+    /// </remarks>
     public const double MaxCorrectionHardCeiling = 500e-6;
 
     /// <summary>

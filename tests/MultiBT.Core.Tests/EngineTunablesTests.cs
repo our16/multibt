@@ -68,8 +68,18 @@ public sealed class EngineTunablesTests
     }
 
     [Fact]
-    public void TheCorrectionCeilingLeavesRoomForADeviceThatNeedsMoreThanTheSoftLimit()
+    public void TheCorrectionCeilingIsWideEnoughThatAnOrdinaryDeviceIsNotSaturated()
     {
-        Assert.True(EngineTunables.MaxCorrectionHardCeiling > EngineTunables.MaxCorrection);
+        // The ceiling is the controller's authority, and a device whose clock differs by more than it gets a
+        // correction that is pinned rather than a trough that is held. Bluetooth endpoints measured at >= 200 ppm
+        // against the old ceiling, so this asserts there is room beyond that.
+        Assert.True(
+            EngineTunables.MaxCorrection >= 300e-6,
+            $"the correction ceiling is {EngineTunables.MaxCorrection * 1e6:0} ppm, which does not cover the >= 200 ppm "
+            + "mismatch measured for Bluetooth endpoints");
+
+        // And the ceiling must stay far below the static pitch JND, which is what makes raising it safe: 500 ppm is
+        // 0.87 cents against a JND of 5 to 10 cents.
+        Assert.True(EngineTunables.MaxCorrection < 800e-6);
     }
 }
