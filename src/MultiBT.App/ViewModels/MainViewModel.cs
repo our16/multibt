@@ -830,8 +830,30 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// and during construction the primary is always null because RefreshDevices binds it later, so the
     /// old code threw NullReferenceException before the window was ever shown.
     /// </remarks>
+    /// <summary>
+    /// Actionable warning for the UI, or null when there is nothing for the user to do about it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A VIRTUAL CABLE source is deliberately excluded, and that exclusion was the point of this change. For a
+    /// cable, this program switches the default itself when the mirror starts and puts it back when it stops, so
+    /// the warning could only ever be true for the seconds before that -- during which it tells the user to do by
+    /// hand exactly what the next click does for them. It was reported as noise for exactly that reason.
+    /// </para>
+    /// <para>
+    /// The quiet note that remains for a cable (<c>Input.CableNotRoutedNote</c>) says the routing happens
+    /// automatically instead of asking for it, which is the honest amount to say about a step this program takes.
+    /// </para>
+    /// <para>
+    /// A REAL device is NOT excluded, because nothing switches anything for it: its own loopback carries audio
+    /// only while Windows is rendering into it, so this warning is the only thing between the user and a mirror
+    /// that reports success while every output stays silent.
+    /// </para>
+    /// </remarks>
     public string? CaptureSourceWarning =>
-        CaptureSourceIsNotDefault && ResolvedSourceEndpointName is string name
+        CaptureSourceIsNotDefault
+        && ResolvedSourceEndpointName is string name
+        && !VirtualCableDetector.IsVirtualCableRenderEndpoint(name)
             ? Localizer.Instance.Format("Capture.NotDefault", name)
             : null;
 
