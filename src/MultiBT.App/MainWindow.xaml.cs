@@ -383,13 +383,25 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Opens or closes one device's position picker.</summary>
+    /// <summary>
+    /// Opens the position picker for one device.
+    /// </summary>
+    /// <remarks>
+    /// The view is pointed at the device's current direction here rather than left where it was: opening straight
+    /// ahead for a speaker behind the listener shows a room with the marker apparently missing, and the obvious
+    /// conclusion is that the position was lost.
+    /// </remarks>
     private void OnSpatialPickerClick(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: DeviceViewModel device })
         {
-            device.IsSpatialPickerOpen = !device.IsSpatialPickerOpen;
+            _viewModel.OpenSpatialPicker(device);
+            SpatialPicker.LookAt(device.SpatialDirection);
         }
     }
+
+    /// <summary>Closes the position picker.</summary>
+    private void OnCloseSpatialPicker(object sender, RoutedEventArgs e) => _viewModel.CloseSpatialPicker();
 
     /// <summary>
     /// Places a device where the user pointed in the 3D view.

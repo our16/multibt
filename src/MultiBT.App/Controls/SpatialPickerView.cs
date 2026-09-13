@@ -79,11 +79,6 @@ public sealed class SpatialPickerView : FrameworkElement
     {
         Cursor = Cursors.Cross;
         Focusable = true;
-
-        // A popup's content is loaded again each time it opens, which is exactly where "look at this device"
-        // belongs: opening the picker for a device behind the listener must not show a sphere whose marker
-        // appears to be missing, because the obvious conclusion is that the position was lost.
-        Loaded += (_, _) => LookAt(Direction);
     }
 
     /// <summary>The direction to show, as a unit vector.</summary>

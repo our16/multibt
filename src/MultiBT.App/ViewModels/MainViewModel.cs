@@ -1078,6 +1078,46 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         StatusText = Localizer.Instance["Status.SettingsSaved"];
     }
 
+    /// <summary>The device whose position is being edited, or null when nothing is.</summary>
+    private DeviceViewModel? _spatialPickerDevice;
+
+    /// <summary>Whether the position picker is open.</summary>
+    public bool IsSpatialPickerOpen => _spatialPickerDevice is not null;
+
+    /// <summary>The device the position picker is editing.</summary>
+    public DeviceViewModel? SpatialPickerDevice => _spatialPickerDevice;
+
+    /// <summary>
+    /// Opens the position picker for a device, replacing whatever it was editing.
+    /// </summary>
+    /// <remarks>
+    /// One picker for the whole window rather than one per row. The canvas is the entire point of the view, and
+    /// a canvas big enough to place a speaker in cannot be built inside a device row.
+    /// </remarks>
+    public void OpenSpatialPicker(DeviceViewModel device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+
+        _spatialPickerDevice = device;
+
+        OnPropertyChanged(nameof(IsSpatialPickerOpen));
+        OnPropertyChanged(nameof(SpatialPickerDevice));
+    }
+
+    /// <summary>Closes the position picker.</summary>
+    public void CloseSpatialPicker()
+    {
+        if (_spatialPickerDevice is null)
+        {
+            return;
+        }
+
+        _spatialPickerDevice = null;
+
+        OnPropertyChanged(nameof(IsSpatialPickerOpen));
+        OnPropertyChanged(nameof(SpatialPickerDevice));
+    }
+
     // ------------------------------------------------------------------ profiles
 
     /// <summary>Named scenes from the settings file.</summary>

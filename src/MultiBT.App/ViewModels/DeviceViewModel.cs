@@ -25,7 +25,6 @@ public sealed class DeviceViewModel : ObservableObject
     private bool _isPrimary;
     private double _endpointVolume = double.NaN;
     private bool _endpointMuted;
-    private bool _isSpatialPickerOpen;
 
     /// <summary>What the engine is applying to this device, for the picker's readout. Unity until pushed.</summary>
     private SpatialPlacement _appliedPlacement = SpatialMixer.Unity;
@@ -436,13 +435,6 @@ public sealed class DeviceViewModel : ObservableObject
                 ? label + " · " + string.Create(CultureInfo.InvariantCulture, $"{SpatialDistance:0.#} m")
                 : label;
         }
-    }
-
-    /// <summary>Whether this device's picker popup is open.</summary>
-    public bool IsSpatialPickerOpen
-    {
-        get => _isSpatialPickerOpen;
-        set => SetProperty(ref _isSpatialPickerOpen, value);
     }
 
     /// <summary>How far above or below the horizon the device currently sits, in degrees.</summary>
