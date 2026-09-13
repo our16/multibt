@@ -33,10 +33,18 @@ public static class EngineTunables
 
     /// <summary>
     /// Backlog above which the channel gives up on smooth correction and resyncs:
-    /// <c>maxBacklog = engineLatencyMs + ResyncMarginMs</c> → log + <c>ClearBuffer()</c>.
+    /// <c>maxBacklog = engineLatencyMs + ResyncMarginMs</c> — log, then re-prime.
     /// AudioHQ-validated (0.2.1/0.2.3).
     /// </summary>
-    public const double ResyncMarginMs = 25.0;
+    /// <remarks>
+    /// This is also the line the PRE-FILL must stay below, and it is deliberately the looser of the two
+    /// numbers: the fill lands above <c>f*</c> on purpose (see <see cref="PrefillSlackMs"/>) and a channel
+    /// that lands within a millisecond of this line spends its life crossing it. Measured with
+    /// tools/MirrorSelfTest on real hardware: one channel parked at 124.8 ms against a 125 ms line resynced
+    /// 56 times in a minute while a channel at 102.6 ms resynced none — the audible symptom being that one
+    /// device stutters.
+    /// </remarks>
+    public const double ResyncMarginMs = 35.0;
 
     /// <summary>
     /// Latency presets offered to the user, in ms.
@@ -59,13 +67,33 @@ public static class EngineTunables
     /// Extra pre-fill beyond <c>target + engineLatencyMs</c>, in ms.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The player's first WASAPI pull is approximately one engine-latency's worth of input but not
     /// exactly, and the difference is not knowable up front. Pre-filling to land slightly ABOVE the
     /// target makes the controller converge downward, which is the safe direction: too much buffer
     /// is jitter margin, whereas too little saturates the correction negatively and leaves the ring
     /// with no margin at all.
+    /// </para>
+    /// <para>
+    /// "Slightly" is bounded by the resync line, which is what this value got wrong: landing above
+    /// <c>f*</c> is the intent, but the landing point is
+    /// <c>engineLatencyMs + TargetBacklogMarginMs + PrefillSlackMs</c> after the first pull and the
+    /// resync line is <c>engineLatencyMs + ResyncMarginMs</c>, so the slack must stay under
+    /// <c>ResyncMarginMs - TargetBacklogMarginMs</c> MINUS a guard. At 25 ms of slack the landing
+    /// point sat 5 ms ABOVE the line, which put every channel over it at birth.
+    /// </para>
     /// </remarks>
-    public const double PrefillSlackMs = 25.0;
+    public const double PrefillSlackMs = 12.0;
+
+    /// <summary>
+    /// How far below the resync line the pre-fill must land, in ms.
+    /// </summary>
+    /// <remarks>
+    /// A guard rather than a tight bound, because the landing point after the player's first pull is only
+    /// approximately predictable and a channel that lands on the line stutters. Asserted by a test so that
+    /// changing any of the three margins cannot quietly re-create the defect.
+    /// </remarks>
+    public const double MinimumPrefillGuardMs = 15.0;
 
     // ---------------------------------------------------------------- drift control
 
