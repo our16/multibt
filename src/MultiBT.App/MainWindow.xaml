@@ -470,8 +470,8 @@
                                            AllowsTransparency="True" PopupAnimation="Fade">
                                         <Border Background="White" CornerRadius="9" Padding="12" Margin="0,4,0,0"
                                                 BorderBrush="{StaticResource CardBorder}" BorderThickness="1">
-                                            <StackPanel Width="316">
-                                                <controls:SpatialPickerView Width="316" Height="252"
+                                            <StackPanel Width="388">
+                                                <controls:SpatialPickerView Width="388" Height="340"
                                                     Direction="{Binding SpatialDirection}"
                                                     Distance="{Binding SpatialDistance}"
                                                     UseDistance="{Binding SpatialUseDistance}"

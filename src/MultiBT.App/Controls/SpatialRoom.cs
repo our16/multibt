@@ -28,13 +28,14 @@ internal static class SpatialRoom
     /// </summary>
     /// <remarks>
     /// The scene below is written in metres around the listener's ears, where the floor is a metre down and the
-    /// sofa is two metres wide. A third of that fits inside the unit sphere with a little room to spare, which
-    /// is what keeps the furniture from poking out of the bubble it is drawn inside.
+    /// sofa is two metres wide. Just under three quarters of that fits inside the unit sphere, which is as large
+    /// as the furniture can be drawn before it starts running off the edge of the view: the sphere is what the
+    /// camera is framed around, so anything past it is cropped rather than merely outside the bubble.
     /// </remarks>
-    private const double Scale = 0.6;
+    private const double Scale = 0.72;
 
     /// <summary>Half the width of the sofa, in the scene's own metres.</summary>
-    private const double HalfWidth = 1.02;
+    private const double HalfWidth = 1.0;
 
     private static readonly Brush SofaTop = Frozen(new SolidColorBrush(Color.FromRgb(0xCE, 0xD7, 0xE3)));
     private static readonly Brush SofaFront = Frozen(new SolidColorBrush(Color.FromRgb(0xB2, 0xC0, 0xD2)));
@@ -156,9 +157,9 @@ internal static class SpatialRoom
         {
             double angle = 2.0 * Math.PI * i / Samples;
 
-            // The floor is a metre below the listener's ears, out to a little past the sofa.
+            // The floor is a metre below the listener's ears, out to just past the arms of the sofa.
             (double x, double y, _) = Project(
-                new DevicePosition(Math.Sin(angle) * 1.5, Math.Cos(angle) * 1.5, -1.0),
+                new DevicePosition(Math.Sin(angle) * 1.15, Math.Cos(angle) * 1.15, -1.0),
                 camera,
                 size);
 
