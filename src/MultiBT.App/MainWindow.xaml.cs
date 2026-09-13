@@ -308,6 +308,27 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Copies the diagnostics text, so a fault can be reported as text rather than a screenshot.</summary>
+    private void OnCopyDiagnostics(object sender, RoutedEventArgs e)
+    {
+        string text = _viewModel.DiagnosticsSummary;
+
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(text);
+        }
+        catch (Exception)
+        {
+            // The clipboard is owned by whichever process is writing to it, so this can fail for reasons that have
+            // nothing to do with us. There is nothing useful to say about it and it must not take the window down.
+        }
+    }
+
     private void OnCopyNotice(object sender, RoutedEventArgs e)
     {
         string? text = _viewModel.NoticeText;

@@ -565,8 +565,20 @@
                   Header="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Diagnostics.Group]}"
                   Foreground="{StaticResource TextMuted}" FontSize="12">
             <Border Style="{StaticResource Card}" Margin="0,8,0,0">
-                <TextBlock Text="{Binding DiagnosticsSummary}" FontSize="11"
-                           Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="{Binding DiagnosticsSummary}" FontSize="11"
+                               Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" />
+
+    <!-- Copy, so a fault can be reported as text instead of a screenshot -->
+                    <Button Grid.Column="1" VerticalAlignment="Top" Margin="8,0,0,0" Padding="8,1" FontSize="11"
+                            Style="{StaticResource BaseButton}" Click="OnCopyDiagnostics"
+                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Notice.Copy]}" />
+                </Grid>
             </Border>
         </Expander>
 
