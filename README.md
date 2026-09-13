@@ -93,7 +93,9 @@ Stated plainly, because a README that only lists strengths is not useful:
 * **Acoustic latency is not measured.** There is no microphone-based calibration end to end, so automatic
   alignment is based on a **stated estimate per transport** (Bluetooth 200 ms, HDMI 20 ms, wired 10 ms).
   The manual offset absorbs whatever the estimate gets wrong.
-* **This is a preview.** The audio path has not been verified by ear on real hardware yet.
+* **This is a preview.** The mirror path is verified end to end on one machine — real audio reaching
+  several devices at once, with the per-device panning and delay read downstream rather than assumed — but
+  not acoustically, and not across a wide range of hardware.
 * Speaker sensitivity differences cannot be corrected automatically; only Windows volumes can.
 
 ## Documentation
