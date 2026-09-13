@@ -95,27 +95,40 @@ public static class SpatialMixer
     /// </para>
     /// </remarks>
     /// <param name="index">Direction index; out of range values wrap, so -1 is the same as 7.</param>
-    public static DevicePosition DirectionPosition(int index)
+    public static DevicePosition DirectionPosition(int index) => DirectionPosition(index, 0.0);
+
+    /// <summary>
+    /// The same direction, tilted up or down, still on the same 1 m circle.
+    /// </summary>
+    /// <remarks>
+    /// Elevation is the thing a flat plan cannot express, and the reason the picker is a sphere rather than a
+    /// plane: a speaker in the corner of a ceiling is above AND to a side, and one directly overhead has no
+    /// horizontal direction at all. Keeping the radius fixed means an elevation changes the direction and
+    /// nothing else -- the pan, the distance delay and the attenuation are all still decided by the directions
+    /// of the devices relative to each other, never by how high one of them sits.
+    /// </remarks>
+    /// <param name="index">Horizontal direction index; out of range values wrap.</param>
+    /// <param name="elevationDegrees">0 on the horizon, +90 straight overhead, -90 straight below.</param>
+    public static DevicePosition DirectionPosition(int index, double elevationDegrees)
     {
         double radians = WrapDirection(index) * Math.PI / 4.0;
+        double elevation = elevationDegrees * Math.PI / 180.0;
+        double horizontal = Math.Cos(elevation) * DirectionRadiusMetres;
 
-        double right = Math.Sin(radians) * DirectionRadiusMetres;
-        double front = Math.Cos(radians) * DirectionRadiusMetres;
-
-        // sin(pi) comes out as 1.2e-16, not 0. Snapping keeps a saved position the number it looks like
-        // instead of a rounding artefact, and makes the direction -> position -> direction round trip exact.
-        if (Math.Abs(right) < 1e-9)
-        {
-            right = 0.0;
-        }
-
-        if (Math.Abs(front) < 1e-9)
-        {
-            front = 0.0;
-        }
-
-        return new DevicePosition(right, front, 0.0);
+        return new DevicePosition(
+            Snap(Math.Sin(radians) * horizontal),
+            Snap(Math.Cos(radians) * horizontal),
+            Snap(Math.Sin(elevation) * DirectionRadiusMetres));
     }
+
+    /// <summary>
+    /// Rounds a coordinate that is zero to within floating-point noise to exactly zero.
+    /// </summary>
+    /// <remarks>
+    /// <c>sin(pi)</c> comes out as 1.2e-16 rather than 0. Snapping keeps a saved position the number it looks
+    /// like instead of a rounding artefact, and makes the direction to position to direction round trip exact.
+    /// </remarks>
+    private static double Snap(double value) => Math.Abs(value) < 1e-9 ? 0.0 : value;
 
     /// <summary>
     /// The direction index nearest to a horizontal position.
