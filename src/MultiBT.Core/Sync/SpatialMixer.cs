@@ -21,6 +21,23 @@ public readonly record struct DevicePosition(double Right, double Front, double 
 
     /// <summary>Whether this position carries no information, i.e. it is the listener's own point.</summary>
     public bool IsOrigin => Distance < 0.0001;
+
+    /// <summary>
+    /// The same direction, placed at a different distance.
+    /// </summary>
+    /// <remarks>
+    /// The picker works in directions while the settings store positions, so something has to convert one to
+    /// the other, and it is worth having exactly one place that does. Scaling from the origin is deliberately
+    /// a no-op: a device with no direction has none to scale, and inventing one here would turn "nobody has
+    /// placed this" into "straight ahead" behind the user's back.
+    /// </remarks>
+    public DevicePosition AtDistance(double metres) =>
+        IsOrigin
+            ? this
+            : new DevicePosition(
+                Right / Distance * metres,
+                Front / Distance * metres,
+                Up / Distance * metres);
 }
 
 /// <summary>

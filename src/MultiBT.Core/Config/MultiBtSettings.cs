@@ -152,6 +152,25 @@ public sealed class DeviceSpatialSettings
     /// <summary>Positive is above the listener, negative below.</summary>
     public double Up { get; set; }
 
+    /// <summary>
+    /// Whether this device's DISTANCE takes part in the mix, or only its direction does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Off by default, and that default is exactly the behaviour the app had before the picker existed: every
+    /// device then sits on the same 1 m circle, so distance contributes nothing and a direction only moves the
+    /// stereo image. Switching it on makes the real radius count, which brings in two effects at once: the
+    /// distance delay that holds a farther speaker back so both arrive together, and the distance attenuation
+    /// that gently lowers it.
+    /// </para>
+    /// <para>
+    /// A switch rather than always-on because those two effects are not equally welcome. The delay is the
+    /// whole point of placing devices in a room; the attenuation is a matter of taste, and a speaker put three
+    /// metres away on purpose should not silently lose 9 dB of level to its own position.
+    /// </para>
+    /// </remarks>
+    public bool UseDistance { get; set; }
+
     /// <summary>Whether the user has placed this device at all.</summary>
     public bool IsConfigured =>
         Math.Abs(Right) > 0.0001 || Math.Abs(Front) > 0.0001 || Math.Abs(Up) > 0.0001;

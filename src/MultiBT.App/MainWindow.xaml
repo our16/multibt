@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:MultiBT.App"
         xmlns:loc="clr-namespace:MultiBT.App.Localization"
+        xmlns:controls="clr-namespace:MultiBT.App.Controls"
         mc:Ignorable="d"
         Title="{Binding Source={x:Static loc:Localizer.Instance}, Path=[App.WindowTitle]}"
         Icon="/Assets/multibt.ico"
@@ -444,29 +445,129 @@
                                 </StackPanel>
 
                                 <!--
-                                  Direction: a picker, not three coordinate boxes and not free text. "Where is
-                                  this speaker" has eight answers, and every direction is the same distance
-                                  away, so one dropdown replaces what used to need a label AND three fields,
-                                  in less width and with no way to type a position that makes no sense.
+                                  Position: a button that states where the device is, opening a picker above the
+                                  row. One control rather than a dropdown plus a hidden editor, and the row keeps
+                                  its fixed 58 px however long the label grows.
                                 -->
                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
                                             Margin="0,0,18,0">
                                     <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
                                                Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Label]}" />
-                                    <ComboBox Width="104" Height="24" FontSize="12"
-                                              VerticalAlignment="Center"
-                                              Style="{StaticResource FieldCombo}"
-                                              SelectedIndex="{Binding SpatialDirectionIndex, Mode=TwoWay}"
-                                              ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}">
-                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.0]}" />
-                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.1]}" />
-                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.2]}" />
-                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.3]}" />
-                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.4]}" />
-                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.5]}" />
-                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.6]}" />
-                                        <ComboBoxItem Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.7]}" />
-                                    </ComboBox>
+                                    <Button Width="104" Height="24" Padding="6,0" VerticalAlignment="Center"
+                                            Style="{StaticResource BaseButton}" Click="OnSpatialPickerClick"
+                                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Tip]}">
+                                        <TextBlock Style="{StaticResource OneLine}" FontSize="11"
+                                                   Text="{Binding SpatialLabel}" />
+                                    </Button>
+
+                                    <!--
+                                      The popup is a sibling of the button, so WPF places it against the button
+                                      without an explicit target. Clicking anywhere else closes it, which is what
+                                      makes it a picker rather than a second window.
+                                    -->
+                                    <Popup IsOpen="{Binding IsSpatialPickerOpen, Mode=TwoWay}"
+                                           Placement="Bottom" StaysOpen="False"
+                                           AllowsTransparency="True" PopupAnimation="Fade">
+                                        <Border Background="White" CornerRadius="9" Padding="12" Margin="0,4,0,0"
+                                                BorderBrush="{StaticResource CardBorder}" BorderThickness="1">
+                                            <StackPanel Width="316">
+                                                <controls:SpatialPickerView Width="316" Height="252"
+                                                    Direction="{Binding SpatialDirection}"
+                                                    Distance="{Binding SpatialDistance}"
+                                                    UseDistance="{Binding SpatialUseDistance}"
+                                                    FrontText="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.0]}"
+                                                    BackText="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.4]}"
+                                                    ListenerText="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Listener]}"
+                                                    DirectionPicked="OnSpatialDirectionPicked" />
+
+                                                <Grid Margin="0,6,0,0">
+                                                    <TextBlock Style="{StaticResource OneLine}" FontSize="11"
+                                                               Foreground="{StaticResource TextMuted}"
+                                                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Hint]}" />
+                                                    <Button HorizontalAlignment="Right" Padding="8,1" FontSize="11"
+                                                            Style="{StaticResource BaseButton}" Click="OnResetSpatialView"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.View.Reset]}" />
+                                                </Grid>
+
+                                                <!-- Eight horizontal directions, each a multiple of 45 degrees -->
+                                                <UniformGrid Columns="8" Margin="0,10,0,0">
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="0" Click="OnSpatialDirectionPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.0]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="1" Click="OnSpatialDirectionPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.1]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="2" Click="OnSpatialDirectionPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.2]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="3" Click="OnSpatialDirectionPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.3]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="4" Click="OnSpatialDirectionPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.4]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="5" Click="OnSpatialDirectionPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.5]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="6" Click="OnSpatialDirectionPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.6]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="7" Click="OnSpatialDirectionPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Dir.7]}" />
+                                                </UniformGrid>
+
+                                                <!-- Five heights, combined with whichever direction is set -->
+                                                <UniformGrid Columns="5" Margin="0,4,0,0">
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="90" Click="OnSpatialElevationPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Elev.Up]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="45" Click="OnSpatialElevationPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Elev.High]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="0" Click="OnSpatialElevationPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Elev.Level]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="-45" Click="OnSpatialElevationPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Elev.Low]}" />
+                                                    <Button Style="{StaticResource BaseButton}" Padding="0,3" FontSize="11" Margin="1,0"
+                                                            Tag="-90" Click="OnSpatialElevationPresetClick"
+                                                            Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Elev.Down]}" />
+                                                </UniformGrid>
+
+                                                <Grid Margin="0,10,0,0">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}" Margin="0,0,6,0"
+                                                               Text="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Distance.Label]}" />
+                                                    <Slider Grid.Column="1" Minimum="0.5" Maximum="5" SmallChange="0.1"
+                                                            LargeChange="0.5" VerticalAlignment="Center"
+                                                            Value="{Binding SpatialDistance, Mode=TwoWay}"
+                                                            ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.Distance.Tip]}" />
+                                                    <TextBlock Grid.Column="2" Style="{StaticResource ValueText}" Width="40"
+                                                               Margin="6,0,10,0"
+                                                               Text="{Binding SpatialDistance, StringFormat={}{0:0.#} m}" />
+                                                    <CheckBox Grid.Column="3" VerticalAlignment="Center" FontSize="12"
+                                                              IsChecked="{Binding SpatialUseDistance, Mode=TwoWay}"
+                                                              Content="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.UseDistance]}"
+                                                              ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Spatial.UseDistance.Tip]}" />
+                                                </Grid>
+
+                                                <TextBlock Style="{StaticResource OneLine}" FontSize="11" Margin="0,8,0,0"
+                                                           Foreground="{StaticResource TextPrimary}"
+                                                           Text="{Binding SpatialChannelReadout}" />
+                                                <TextBlock Style="{StaticResource OneLine}" FontSize="11" Margin="0,2,0,0"
+                                                           Foreground="{StaticResource TextMuted}"
+                                                           Text="{Binding SpatialDistanceReadout}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
                                 </StackPanel>
 
                                 <!-- delay -->

@@ -215,6 +215,103 @@ public sealed class SpatialProjectionTests
         Assert.True(towards.Up > 0.0, "an overhead camera looks down at the listener, so it sees from above");
     }
 
+    [Fact]
+    public void TheSilhouetteIsWhereTheLineOfSightIsTangent()
+    {
+        var camera = SpatialViewCamera.Default;
+        DevicePosition[] outline = SpatialProjection.Silhouette(camera);
+
+        Assert.Equal(64, outline.Length);
+
+        foreach (DevicePosition point in outline)
+        {
+            double length = Math.Sqrt(
+                (point.Right * point.Right) + (point.Front * point.Front) + (point.Up * point.Up));
+
+            // On the sphere...
+            Assert.Equal(1.0, length, Tolerance);
+
+            // ...and exactly on the boundary of what the camera can see, which is what makes it the outline
+            // rather than the horizon. On the boundary itself the answer is a coin flip, so what is asserted is
+            // the boundary condition: the line of sight grazes the surface here instead of crossing it.
+            (double ex, double ey, double ez) = Eye(camera);
+            double towardsEye = (point.Right * ex) + (point.Front * ey) + (point.Up * ez);
+            double squared =
+                (point.Right * point.Right) + (point.Front * point.Front) + (point.Up * point.Up);
+
+            Assert.Equal(squared, towardsEye, 1e-9);
+
+            // Just inside the boundary the camera does see it: a direction nudged towards the view axis, which
+            // stays ON the sphere. Scaling it inwards instead would put it inside the ball, where it is hidden
+            // for the obvious reason.
+            Assert.True(SpatialProjection.IsVisible(
+                Normalised(
+                    point.Right + (0.02 * ex),
+                    point.Front + (0.02 * ey),
+                    point.Up + (0.02 * ez)),
+                camera));
+        }
+    }
+
+    [Fact]
+    public void AnElevationRingNeverLeavesItsOwnHeight()
+    {
+        foreach (double elevation in new[] { -45.0, 0.0, 45.0 })
+        {
+            double expected = Math.Sin(Degrees(elevation));
+
+            foreach (DevicePosition point in SpatialProjection.ElevationRing(elevation, 24))
+            {
+                Assert.Equal(expected, point.Up, Tolerance);
+                Assert.Equal(1.0, point.Distance, Tolerance);
+            }
+        }
+
+        // The poles have no horizontal direction left at all.
+        foreach (DevicePosition point in SpatialProjection.ElevationRing(90.0, 8))
+        {
+            Assert.Equal(0.0, point.Right, Tolerance);
+            Assert.Equal(0.0, point.Front, Tolerance);
+            Assert.Equal(1.0, point.Up, Tolerance);
+        }
+    }
+
+    [Fact]
+    public void TheHorizonRingStartsAheadAndTurnsTowardsTheListenersRight()
+    {
+        DevicePosition[] horizon = SpatialProjection.ElevationRing(0.0, 8);
+
+        // Sample 0 is straight ahead, sample 2 a quarter of the way round is hard right.
+        Assert.Equal(0.0, horizon[0].Right, Tolerance);
+        Assert.Equal(1.0, horizon[0].Front, Tolerance);
+        Assert.Equal(1.0, horizon[2].Right, Tolerance);
+        Assert.Equal(0.0, horizon[2].Front, Tolerance);
+    }
+
+    [Fact]
+    public void ADistanceRingIsOnlyOnScreenWhenTheViewIsFramedAroundIt()
+    {
+        DevicePosition atThree = SpatialMixer.DirectionPosition(1).AtDistance(3.0);
+
+        // Framed around the unit sphere -- the default -- a device three radii away is drawn past the edge,
+        // which is why the picker widens the frame as soon as a distance is switched on.
+        (double closeX, double closeY, _) = SpatialProjection.ProjectPoint(atThree, SpatialViewCamera.Default, Size);
+        Assert.False(closeX > 0 && closeX < Size && closeY > 0 && closeY < Size);
+
+        var framedOut = SpatialViewCamera.Default with { FrameRadius = 3.0 };
+        (double x, double y, bool visible) = SpatialProjection.ProjectPoint(atThree, framedOut, Size);
+
+        Assert.Equal(3.0, atThree.Distance, Tolerance);
+        Assert.True(visible);
+        Assert.InRange(x, 0.0, Size);
+        Assert.InRange(y, 0.0, Size);
+
+        // The same direction on the sphere is drawn somewhere else, so a device with a meaningful distance
+        // cannot be mistaken for one that has none.
+        (double sx, double sy, _) = SpatialProjection.Project(SpatialMixer.DirectionPosition(1), framedOut, Size);
+        Assert.True(Math.Abs(x - sx) > 0.5 || Math.Abs(y - sy) > 0.5);
+    }
+
     /// <summary>The camera's own position, as the tests compute it independently.</summary>
     private static (double X, double Y, double Z) Eye(SpatialViewCamera camera)
     {

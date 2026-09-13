@@ -381,4 +381,70 @@ public partial class MainWindow : Window
             _viewModel.SetPrimaryDevice(device);
         }
     }
+
+    /// <summary>Opens or closes one device's position picker.</summary>
+    private void OnSpatialPickerClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: DeviceViewModel device })
+        {
+            device.IsSpatialPickerOpen = !device.IsSpatialPickerOpen;
+        }
+    }
+
+    /// <summary>
+    /// Places a device where the user pointed in the 3D view.
+    /// </summary>
+    /// <remarks>
+    /// Raised on every move of a drag as well as on a click, so the device is heard while it is being moved
+    /// rather than after the mouse is released. The settings write stays debounced, so a drag is one write.
+    /// </remarks>
+    private void OnSpatialDirectionPicked(object? sender, DevicePosition direction)
+    {
+        if (sender is FrameworkElement { DataContext: DeviceViewModel device })
+        {
+            device.SetSpatialDirection(direction);
+        }
+    }
+
+    /// <summary>Applies one of the eight horizontal directions, keeping the device's height.</summary>
+    private void OnSpatialDirectionPresetClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: DeviceViewModel device } element
+            && int.TryParse(element.Tag as string, out int index))
+        {
+            device.ApplyDirectionPreset(index);
+        }
+    }
+
+    /// <summary>Applies one of the five heights, keeping the device's horizontal direction.</summary>
+    private void OnSpatialElevationPresetClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: DeviceViewModel device } element
+            && double.TryParse(
+                element.Tag as string,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out double elevation))
+        {
+            device.ApplyElevationPreset(elevation);
+        }
+    }
+
+    /// <summary>Puts the picker's view back to its opening angle.</summary>
+    private void OnResetSpatialView(object sender, RoutedEventArgs e)
+    {
+        // The button and the view are siblings somewhere inside the popup, and a DataTemplate cannot name its
+        // elements for the code behind. Walking up until a panel is found that holds the view is the shortest
+        // route that does not depend on how deeply the two are nested.
+        for (FrameworkElement? node = sender as FrameworkElement; node is not null;)
+        {
+            if (node is Panel panel && panel.Children.OfType<Controls.SpatialPickerView>().FirstOrDefault() is { } picker)
+            {
+                picker.ResetCamera();
+                return;
+            }
+
+            node = System.Windows.Media.VisualTreeHelper.GetParent(node) as FrameworkElement;
+        }
+    }
 }

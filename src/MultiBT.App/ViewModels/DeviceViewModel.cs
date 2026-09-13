@@ -25,6 +25,10 @@ public sealed class DeviceViewModel : ObservableObject
     private bool _isPrimary;
     private double _endpointVolume = double.NaN;
     private bool _endpointMuted;
+    private bool _isSpatialPickerOpen;
+
+    /// <summary>What the engine is applying to this device, for the picker's readout. Unity until pushed.</summary>
+    private SpatialPlacement _appliedPlacement = SpatialMixer.Unity;
 
     public DeviceViewModel(
         AudioEndpointInfo endpoint,
@@ -277,29 +281,242 @@ public sealed class DeviceViewModel : ObservableObject
     /// <summary>Subtracts one step from the manual delay, stopping at zero.</summary>
     public void DecreaseDelay() => ManualOffsetMs = Math.Clamp(ManualOffsetMs - DelayStepMs, 0.0, 2000.0);
 
+    /// <summary>The closest a device may be placed, in metres.</summary>
+    public const double MinimumSpatialDistanceMetres = 0.5;
+
+    /// <summary>The farthest a device may be placed, in metres.</summary>
+    public const double MaximumSpatialDistanceMetres = 5.0;
+
     /// <summary>
-    /// This device's direction: 0 is straight ahead, and each step is another 45 degrees to the right.
+    /// The key for each direction name, in the order the table stores them.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// An index rather than three coordinate boxes. "Where is this speaker" has eight sensible answers, and
-    /// three number fields in a 58 px row ask the question badly. The coordinates are still what gets saved:
-    /// the index is derived from them, so a position written by an older version of the app lands on the
-    /// nearest direction instead of being thrown away.
-    /// </para>
-    /// <para>
-    /// Straight ahead is the default, and for a device nobody has placed it is also the honest answer: an
-    /// unplaced device has no direction to report, and straight ahead is the direction that does nothing.
-    /// </para>
+    /// Written out rather than composed from an index at the point of use. A built-up key
+    /// ("Spatial.Dir." + i) compiles and reads fine, and hides the keys from every search for what the app
+    /// actually uses -- including this project's own dead-key audit and its localisation gate.
     /// </remarks>
-    public int SpatialDirectionIndex
+    private static readonly string[] DirectionKeys =
+    [
+        "Spatial.Dir.0",
+        "Spatial.Dir.1",
+        "Spatial.Dir.2",
+        "Spatial.Dir.3",
+        "Spatial.Dir.4",
+        "Spatial.Dir.5",
+        "Spatial.Dir.6",
+        "Spatial.Dir.7",
+    ];
+
+    /// <summary>
+    /// This device's direction as a unit vector, however far away it has been placed.
+    /// </summary>
+    /// <remarks>
+    /// A device nobody has placed reads as straight ahead, which is the direction that does nothing: one metre
+    /// dead ahead has nothing to pan towards and nothing to be delayed against, so "nobody placed this" and
+    /// "placed dead ahead" sound identical rather than being two code paths.
+    /// </remarks>
+    public DevicePosition SpatialDirection
     {
-        get => SpatialMixer.NearestDirectionIndex(Profile.Spatial.Right, Profile.Spatial.Front);
+        get
+        {
+            DevicePosition position = Profile.Spatial.ToPosition();
+
+            return position.IsOrigin
+                ? new DevicePosition(0.0, SpatialMixer.DirectionRadiusMetres, 0.0)
+                : position.AtDistance(SpatialMixer.DirectionRadiusMetres);
+        }
+    }
+
+    /// <summary>
+    /// How far away this device is, in metres.
+    /// </summary>
+    /// <remarks>
+    /// A separate setting from the direction because it is a separate question, and -- with
+    /// <see cref="SpatialUseDistance"/> off -- a separate promise: a direction always moves the stereo image,
+    /// while the distance only matters once the user has said that it should.
+    /// </remarks>
+    public double SpatialDistance
+    {
+        get
+        {
+            DevicePosition position = Profile.Spatial.ToPosition();
+
+            return position.IsOrigin ? SpatialMixer.DirectionRadiusMetres : position.Distance;
+        }
+
         set
         {
-            DevicePosition position = SpatialMixer.DirectionPosition(value);
+            double distance = Math.Round(
+                Math.Clamp(value, MinimumSpatialDistanceMetres, MaximumSpatialDistanceMetres),
+                1);
 
-            SetSpatial(position.Right, position.Front, position.Up);
+            DevicePosition direction = SpatialDirection;
+
+            SetSpatial(direction.AtDistance(distance));
+        }
+    }
+
+    /// <summary>Whether the distance takes part in the mix, or only the direction does.</summary>
+    public bool SpatialUseDistance
+    {
+        get => Profile.Spatial.UseDistance;
+        set
+        {
+            if (Profile.Spatial.UseDistance == value)
+            {
+                return;
+            }
+
+            Profile.Spatial.UseDistance = value;
+
+            OnPropertyChanged(nameof(SpatialUseDistance));
+            OnPropertyChanged(nameof(SpatialLabel));
+            OnPropertyChanged(nameof(SpatialDistanceReadout));
+
+            // Every device is re-placed, not just this one: the reference distance is shared, so switching
+            // one device's distance on or off can change what every other device should be given.
+            RaiseSpatialPlacementChanged();
+        }
+    }
+
+    /// <summary>
+    /// Places the device at a direction, keeping how far away it is.
+    /// </summary>
+    /// <remarks>
+    /// Takes a unit vector rather than a point in space, so that clicking the same direction while the camera
+    /// happens to be nearer or farther away cannot move the speaker.
+    /// </remarks>
+    public void SetSpatialDirection(DevicePosition direction)
+    {
+        if (direction.IsOrigin)
+        {
+            return;
+        }
+
+        SetSpatial(direction.AtDistance(SpatialDistance));
+    }
+
+    /// <summary>
+    /// The direction, and -- when it counts -- the distance, as one short line.
+    /// </summary>
+    /// <remarks>
+    /// Named rather than numeric. "右前上方" answers "where did I put this speaker" at a glance, which three
+    /// coordinates do not, and the elevation is folded into the name rather than shown as a second number.
+    /// The distance appears only when it is switched on: showing a number that changes nothing invites the
+    /// question of why it changes nothing.
+    /// </remarks>
+    public string SpatialLabel
+    {
+        get
+        {
+            Localizer loc = Localizer.Instance;
+            DevicePosition direction = SpatialDirection;
+            double elevation = Math.Asin(Math.Clamp(direction.Up, -1.0, 1.0)) * 180.0 / Math.PI;
+            string label;
+
+            if (elevation > 60.0)
+            {
+                label = loc["Spatial.Zenith"];
+            }
+            else if (elevation < -60.0)
+            {
+                label = loc["Spatial.Nadir"];
+            }
+            else
+            {
+                int index = SpatialMixer.NearestDirectionIndex(direction.Right, direction.Front);
+                string suffix = elevation > 20.0
+                    ? loc["Spatial.Suffix.Above"]
+                    : elevation < -20.0 ? loc["Spatial.Suffix.Below"] : loc["Spatial.Suffix.Level"];
+
+                label = loc[DirectionKeys[index]] + suffix;
+            }
+
+            return Profile.Spatial.UseDistance
+                ? label + " · " + string.Create(CultureInfo.InvariantCulture, $"{SpatialDistance:0.#} m")
+                : label;
+        }
+    }
+
+    /// <summary>Whether this device's picker popup is open.</summary>
+    public bool IsSpatialPickerOpen
+    {
+        get => _isSpatialPickerOpen;
+        set => SetProperty(ref _isSpatialPickerOpen, value);
+    }
+
+    /// <summary>How far above or below the horizon the device currently sits, in degrees.</summary>
+    public double CurrentElevationDegrees =>
+        Math.Asin(Math.Clamp(SpatialDirection.Up, -1.0, 1.0)) * 180.0 / Math.PI;
+
+    /// <summary>
+    /// Applies one of the eight horizontal directions, keeping the height the device already has.
+    /// </summary>
+    /// <remarks>
+    /// The horizontal direction and the height are two questions rather than forty buttons: a horizontal preset
+    /// keeps the elevation and a height preset keeps the horizontal direction, so any of the forty exact
+    /// positions is two clicks away and none of them needs a name of its own.
+    /// </remarks>
+    public void ApplyDirectionPreset(int index) =>
+        SetSpatialDirection(SpatialMixer.DirectionPosition(index, CurrentElevationDegrees));
+
+    /// <summary>Applies a height, keeping the horizontal direction the device already has.</summary>
+    public void ApplyElevationPreset(double elevationDegrees) =>
+        SetSpatialDirection(SpatialMixer.DirectionPosition(
+            SpatialMixer.NearestDirectionIndex(SpatialDirection.Right, SpatialDirection.Front),
+            elevationDegrees));
+
+    /// <summary>
+    /// Records what the engine is actually applying to this device, so the picker can state it.
+    /// </summary>
+    /// <remarks>
+    /// Pushed in by the view model rather than worked out here, because both numbers are RELATIVE: the distance
+    /// delay is measured against the farthest device and the attenuation against the nearest, so one device on
+    /// its own cannot compute either of them.
+    /// </remarks>
+    public void SetAppliedSpatialPlacement(SpatialPlacement placement)
+    {
+        if (_appliedPlacement == placement)
+        {
+            return;
+        }
+
+        _appliedPlacement = placement;
+
+        OnPropertyChanged(nameof(SpatialChannelReadout));
+        OnPropertyChanged(nameof(SpatialDistanceReadout));
+    }
+
+    /// <summary>The stereo image this device is being given, as the picker states it.</summary>
+    public string SpatialChannelReadout => Localizer.Instance.Format(
+        "Spatial.Readout.Channels",
+        Number(_appliedPlacement.LeftGain, "0.00"),
+        Number(_appliedPlacement.RightGain, "0.00"));
+
+    /// <summary>
+    /// What the distance is doing to this device, or a note that it is doing nothing.
+    /// </summary>
+    /// <remarks>
+    /// The attenuation is taken from the LOUDER channel, which is the one the pan leaves at unity, so what is
+    /// reported is the distance attenuation alone and never the panning twice over.
+    /// </remarks>
+    public string SpatialDistanceReadout
+    {
+        get
+        {
+            Localizer loc = Localizer.Instance;
+
+            if (!SpatialUseDistance)
+            {
+                return loc["Spatial.Readout.Passive"];
+            }
+
+            double loudest = Math.Max(_appliedPlacement.LeftGain, _appliedPlacement.RightGain);
+            double decibels = 20.0 * Math.Log10(Math.Clamp(loudest, 1e-6, 1.0));
+
+            return loc.Format("Spatial.Readout.Delay", Number(_appliedPlacement.DelayMs, "0.#"))
+                + " · "
+                + loc.Format("Spatial.Readout.Attenuation", Number(decibels, "0.0"));
         }
     }
 
@@ -311,21 +528,41 @@ public sealed class DeviceViewModel : ObservableObject
     /// independent numbers, and notifying them separately could let a listener observe a half-applied
     /// position -- the reference distance is shared, so a partial update is a real intermediate state.
     /// </remarks>
-    private void SetSpatial(double right, double front, double up)
+    private void SetSpatial(DevicePosition position)
     {
-        if (Math.Abs(Profile.Spatial.Right - right) < 0.0001
-            && Math.Abs(Profile.Spatial.Front - front) < 0.0001
-            && Math.Abs(Profile.Spatial.Up - up) < 0.0001)
+        if (Math.Abs(Profile.Spatial.Right - position.Right) < 0.0001
+            && Math.Abs(Profile.Spatial.Front - position.Front) < 0.0001
+            && Math.Abs(Profile.Spatial.Up - position.Up) < 0.0001)
         {
             return;
         }
 
-        Profile.Spatial.Set(right, front, up);
+        Profile.Spatial.Set(position.Right, position.Front, position.Up);
 
-        // One notification for one fact. The picker re-reads the direction from the coordinates, and
-        // MainViewModel re-places EVERY device on this change, because the reference distance is shared.
-        OnPropertyChanged(nameof(SpatialDirectionIndex));
+        OnPropertyChanged(nameof(SpatialDirection));
+        OnPropertyChanged(nameof(SpatialDistance));
+        OnPropertyChanged(nameof(SpatialLabel));
+
+        RaiseSpatialPlacementChanged();
     }
+
+    /// <summary>Tells listeners that a position moved, so that every device is re-placed.</summary>
+    private void RaiseSpatialPlacementChanged() => OnPropertyChanged(nameof(SpatialPlacementChanged));
+
+    /// <summary>Formats a readout number invariantly, so the decimal separator never depends on the machine.</summary>
+    private static string Number(double value, string format) =>
+        value.ToString(format, CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// A change token for the placement, raised whenever this device's position or distance switch moves.
+    /// </summary>
+    /// <remarks>
+    /// A property with no value, because the listener's job is to re-place EVERY device and not to read
+    /// anything from this one. Naming it after the change rather than reusing one of the real properties is
+    /// what lets the distance switch join in without the listener having to keep an arbitrary pair of names
+    /// in step.
+    /// </remarks>
+    public bool SpatialPlacementChanged => false;
 
     /// <summary>Manual delay as shown in the UI, e.g. "125 ms".</summary>
     public string DelayLabel => string.Create(
@@ -396,8 +633,9 @@ public sealed class DeviceViewModel : ObservableObject
         OnPropertyChanged(nameof(EndpointVolumePercent));
 
         // A device that is idle has no runtime text of its own, so re-reading Status is what turns its
-        // placeholder into the new language.
+        // placeholder into the new language. The position label is composed from the table too.
         OnPropertyChanged(nameof(Status));
+        OnPropertyChanged(nameof(SpatialLabel));
     }
 
     /// <summary>Refreshes every computed property after the underlying settings change.</summary>

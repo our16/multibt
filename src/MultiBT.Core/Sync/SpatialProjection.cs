@@ -9,11 +9,19 @@ namespace MultiBT.Core.Sync;
 /// </param>
 /// <param name="ElevationDegrees">Height above the horizon: 0 is level with the listener, 90 is overhead.</param>
 /// <param name="Distance">How far the camera sits from the listener, measured in sphere radii.</param>
+/// <param name="FrameRadius">
+/// The radius the view is framed around, in sphere radii. 1 keeps the direction sphere filling the viewport;
+/// a device placed further out needs a larger frame or its marker is drawn off the edge.
+/// </param>
 /// <remarks>
 /// Mutable state of the VIEW, not of any device, which is why it is not part of a device's settings: two
 /// devices share one camera, and turning it to place one device must not move the other.
 /// </remarks>
-public readonly record struct SpatialViewCamera(double AzimuthDegrees, double ElevationDegrees, double Distance)
+public readonly record struct SpatialViewCamera(
+    double AzimuthDegrees,
+    double ElevationDegrees,
+    double Distance,
+    double FrameRadius = 1.0)
 {
     /// <summary>In front of the listener and above, so the floor and the horizon are both visible.</summary>
     /// <remarks>
@@ -33,11 +41,20 @@ public readonly record struct SpatialViewCamera(double AzimuthDegrees, double El
     public const double MaxElevationDegrees = 85.0;
 
     /// <summary>The same camera with its tilt kept inside the usable range.</summary>
-    public SpatialViewCamera Clamped() => this with
+    public SpatialViewCamera Clamped()
     {
-        ElevationDegrees = Math.Clamp(ElevationDegrees, -MaxElevationDegrees, MaxElevationDegrees),
-        Distance = Math.Max(1.35, Distance),
-    };
+        double frame = Math.Max(FrameRadius, 1e-3);
+
+        return this with
+        {
+            ElevationDegrees = Math.Clamp(ElevationDegrees, -MaxElevationDegrees, MaxElevationDegrees),
+            FrameRadius = frame,
+
+            // The camera must stay outside what it is framing: at or inside the framed radius the silhouette has
+            // no solution and the projection collapses to a point.
+            Distance = Math.Max(Math.Max(1.35, Distance), frame * 1.2),
+        };
+    }
 }
 
 /// <summary>
@@ -83,6 +100,21 @@ public static class SpatialProjection
     public static (double X, double Y, bool Visible) Project(
         DevicePosition direction,
         SpatialViewCamera camera,
+        double size) => ProjectPoint(direction.AtDistance(1.0), camera, size);
+
+    /// <summary>
+    /// Projects a point in space, measured in sphere radii.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="Project"/> because the picker draws one thing that is not on the sphere: the
+    /// ring at the device's own distance, and the marker sitting on it, when its distance is switched on.
+    /// </remarks>
+    /// <param name="point">A point in space; the sphere has radius 1 and the listener is the origin.</param>
+    /// <param name="camera">Where the view is looking from.</param>
+    /// <param name="size">Viewport side length in pixels.</param>
+    public static (double X, double Y, bool Visible) ProjectPoint(
+        DevicePosition point,
+        SpatialViewCamera camera,
         double size)
     {
         if (size <= 0.0)
@@ -94,12 +126,10 @@ public static class SpatialProjection
         (double fx, double fy, double fz, double rx, double ry, double rz, double ux, double uy, double uz) =
             Basis(camera);
 
-        (double nx, double ny, double nz) = Normalise(direction.Right, direction.Front, direction.Up);
-
         // Camera-space coordinates: x along the screen's right, y up the screen, z into the screen.
-        double vx = nx - eyeX;
-        double vy = ny - eyeY;
-        double vz = nz - eyeZ;
+        double vx = point.Right - eyeX;
+        double vy = point.Front - eyeY;
+        double vz = point.Up - eyeZ;
 
         double depth = (vx * fx) + (vy * fy) + (vz * fz);
         double right = (vx * rx) + (vy * ry) + (vz * rz);
@@ -116,21 +146,55 @@ public static class SpatialProjection
         return (
             (size / 2.0) + (focal * right / depth),
             (size / 2.0) - (focal * up / depth),
-            IsFacingCamera(nx, ny, nz, eyeX, eyeY, eyeZ));
+            IsVisible(point, camera));
     }
 
     /// <summary>
-    /// Whether a direction is on the part of the sphere the camera can see.
+    /// Whether a point in space is in front of everything the sphere hides.
     /// </summary>
     /// <remarks>
-    /// NOT <c>dot(point, eye) &gt; 0</c>, which is the test for "on the near hemisphere" and lets through
-    /// everything the near surface hides. The camera is OUTSIDE the sphere, so a direction is only visible
-    /// when the eye is on the outward side of its surface: <c>dot(point, eye) &gt; 1</c>. Anything else is
-    /// drawn where a nearer direction already is, which is what makes clicking a sphere show the near
-    /// surface rather than the far one.
+    /// <para>
+    /// The line of sight from the camera to the point must not cross the sphere first. That is a segment
+    /// against sphere test, and it is not the same as the rule a direction on the surface obeys:
+    /// <c>dot(point, eye) &gt; 1</c> is only correct ON the unit sphere, because it is the statement that the
+    /// eye lies on the outward side of the surface there. Applied to a point three radii away it declares a
+    /// speaker in plain view to be hidden, which is what the distance-ring test caught.
+    /// </para>
+    /// <para>
+    /// A point exactly on the far surface has its first crossing strictly before it and is hidden; a point on
+    /// the near surface, or on the rim where the line of sight is tangent, is the crossing itself and is not.
+    /// </para>
     /// </remarks>
-    private static bool IsFacingCamera(double x, double y, double z, double eyeX, double eyeY, double eyeZ) =>
-        ((x * eyeX) + (y * eyeY) + (z * eyeZ)) > 1.0;
+    public static bool IsVisible(DevicePosition point, SpatialViewCamera camera)
+    {
+        (double eyeX, double eyeY, double eyeZ) = Eye(camera);
+
+        double vx = point.Right - eyeX;
+        double vy = point.Front - eyeY;
+        double vz = point.Up - eyeZ;
+
+        double a = (vx * vx) + (vy * vy) + (vz * vz);
+
+        if (a < 1e-12)
+        {
+            // The point IS the camera, so there is no line of sight to speak of.
+            return false;
+        }
+
+        double b = 2.0 * ((eyeX * vx) + (eyeY * vy) + (eyeZ * vz));
+        double c = (eyeX * eyeX) + (eyeY * eyeY) + (eyeZ * eyeZ) - 1.0;
+        double discriminant = (b * b) - (4.0 * a * c);
+
+        if (discriminant < 0.0)
+        {
+            // The line of sight misses the sphere altogether.
+            return true;
+        }
+
+        double firstCrossing = (-b - Math.Sqrt(discriminant)) / (2.0 * a);
+
+        return firstCrossing >= 1.0 - 1e-9;
+    }
 
     /// <summary>
     /// Turns a click into the direction it points at.
@@ -186,6 +250,83 @@ public static class SpatialProjection
         return new DevicePosition(px, py, pz);
     }
 
+    /// <summary>
+    /// The sphere's outline as the camera sees it, as a ring of directions.
+    /// </summary>
+    /// <remarks>
+    /// The outline is not the horizon and not the equator: seen from outside a sphere, it is the set of points
+    /// where the line of sight is tangent, which sits at <c>1 / distance</c> along the view axis. Drawing the
+    /// horizon there instead is a mistake that still looks like a sphere, which is why this is computed rather
+    /// than eyeballed.
+    /// </remarks>
+    /// <param name="camera">Where the view is looking from.</param>
+    /// <param name="samples">How many points make up the ring.</param>
+    public static DevicePosition[] Silhouette(SpatialViewCamera camera, int samples = 64)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(samples, 3);
+
+        SpatialViewCamera safe = camera.Clamped();
+        (double ex, double ey, double ez) = Eye(safe);
+
+        double length = Math.Sqrt((ex * ex) + (ey * ey) + (ez * ez));
+        (double dx, double dy, double dz) = (ex / length, ey / length, ez / length);
+
+        // Two directions across the view axis to sweep the ring along. The tilt is clamped short of vertical,
+        // so (dx, dy) can never both be zero and this basis never collapses.
+        (double ax, double ay, double az) = Normalise(-dy, dx, 0.0);
+        (double bx, double by, double bz) = (
+            (dy * az) - (dz * ay),
+            (dz * ax) - (dx * az),
+            (dx * ay) - (dy * ax));
+
+        double towardsEye = 1.0 / length;
+        double radius = Math.Sqrt(Math.Max(0.0, 1.0 - (towardsEye * towardsEye)));
+
+        var ring = new DevicePosition[samples];
+
+        for (int i = 0; i < samples; i++)
+        {
+            double angle = 2.0 * Math.PI * i / samples;
+            double c = Math.Cos(angle);
+            double s = Math.Sin(angle);
+
+            ring[i] = Normalised(
+                (towardsEye * dx) + (radius * ((c * ax) + (s * bx))),
+                (towardsEye * dy) + (radius * ((c * ay) + (s * by))),
+                (towardsEye * dz) + (radius * ((c * az) + (s * bz))));
+        }
+
+        return ring;
+    }
+
+    /// <summary>
+    /// A ring of directions at one elevation, for drawing the sphere's latitude lines.
+    /// </summary>
+    /// <param name="elevationDegrees">0 is the horizon, +90 straight overhead, -90 straight below.</param>
+    /// <param name="samples">How many points make up the ring.</param>
+    public static DevicePosition[] ElevationRing(double elevationDegrees, int samples = 64)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(samples, 3);
+
+        double elevation = Degrees(elevationDegrees);
+        double horizontal = Math.Cos(elevation);
+        double up = Math.Sin(elevation);
+
+        var ring = new DevicePosition[samples];
+
+        for (int i = 0; i < samples; i++)
+        {
+            double azimuth = 2.0 * Math.PI * i / samples;
+
+            ring[i] = new DevicePosition(
+                Math.Sin(azimuth) * horizontal,
+                Math.Cos(azimuth) * horizontal,
+                up);
+        }
+
+        return ring;
+    }
+
     /// <summary>The camera's position, in sphere radii.</summary>
     private static (double X, double Y, double Z) Eye(SpatialViewCamera camera)
     {
@@ -237,18 +378,31 @@ public static class SpatialProjection
     }
 
     /// <summary>
-    /// Pixels per unit at the sphere's centre, chosen so the silhouette fills the viewport.
+    /// Pixels per unit at the centre of the view, chosen so the framed radius fills the viewport.
     /// </summary>
     /// <remarks>
-    /// The silhouette of a unit sphere seen from distance d is a circle of radius 1/sqrt(d*d - 1) in the same
-    /// units, so scaling by its inverse makes the sphere the same apparent size whatever the distance is and
-    /// keeps the click targets from shrinking when the camera is pulled back.
+    /// A sphere of radius r seen from distance d puts its silhouette at <c>f * r / sqrt(d*d - r*r)</c> pixels, so
+    /// the focal that makes it fill the viewport is that expression inverted. Note <c>sqrt(d*d - r*r)</c> and
+    /// not <c>sqrt(d*d - 1)</c>: the two only agree when the framed radius is 1, and using the latter for a
+    /// device three metres away framed 46 percent too large -- which put the marker off the edge it was
+    /// supposed to be inside.
     /// </remarks>
     private static double Focal(SpatialViewCamera camera, double size)
     {
-        double distance = camera.Clamped().Distance;
+        SpatialViewCamera safe = camera.Clamped();
+        double framed = safe.FrameRadius;
 
-        return (size * FillFraction / 2.0) * Math.Sqrt((distance * distance) - 1.0);
+        double separation = Math.Max((safe.Distance * safe.Distance) - (framed * framed), 1e-6);
+
+        return (size * FillFraction / 2.0) * Math.Sqrt(separation) / framed;
+    }
+
+    /// <summary>The unit direction of a vector, as a position.</summary>
+    private static DevicePosition Normalised(double x, double y, double z)
+    {
+        (double nx, double ny, double nz) = Normalise(x, y, z);
+
+        return new DevicePosition(nx, ny, nz);
     }
 
     private static (double X, double Y, double Z) Normalise(double x, double y, double z)

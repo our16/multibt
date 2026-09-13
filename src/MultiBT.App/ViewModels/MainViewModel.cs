@@ -746,7 +746,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
                 // A position change re-places EVERY device, not just this one, because the distance delay is
                 // measured against the nearest device: moving one can change what another should be given.
-                if (e.PropertyName == nameof(DeviceViewModel.SpatialDirectionIndex))
+                if (e.PropertyName == nameof(DeviceViewModel.SpatialPlacementChanged))
                 {
                     ApplySpatialPlacements();
                     QueueSettingsSave();
@@ -1024,20 +1024,36 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// </remarks>
     public void ApplySpatialPlacements()
     {
-        if (_engine is null)
-        {
-            return;
-        }
-
         var positions = new Dictionary<string, MultiBT.Core.Sync.DevicePosition>(StringComparer.Ordinal);
 
         foreach (DeviceViewModel device in Devices.Where(d => d.IsEnabled && d.Profile.Spatial.IsConfigured))
         {
-            positions[device.Key] = device.Profile.Spatial.ToPosition();
+            // The distance only takes part when the device says so. With it off, every device sits on the same
+            // 1 m circle, so the delay is zero and the gain is unity for all of them, and a direction changes
+            // nothing but the stereo image -- which is exactly what the app did before a position could be
+            // clicked at all.
+            positions[device.Key] = device.Profile.Spatial.UseDistance
+                ? device.Profile.Spatial.ToPosition()
+                : device.SpatialDirection.AtDistance(MultiBT.Core.Sync.SpatialMixer.DirectionRadiusMetres);
         }
 
         IReadOnlyDictionary<string, MultiBT.Core.Sync.SpatialPlacement> placements =
             MultiBT.Core.Sync.SpatialMixer.ComputePlacements(positions);
+
+        // Hand every device what it is being given, whether or not it has a channel right now: the picker states
+        // these numbers, and a stopped mirror showing the wrong ones would be worse than showing none.
+        foreach (DeviceViewModel device in Devices)
+        {
+            device.SetAppliedSpatialPlacement(
+                placements.TryGetValue(device.Key, out MultiBT.Core.Sync.SpatialPlacement placed)
+                    ? placed
+                    : MultiBT.Core.Sync.SpatialMixer.Unity);
+        }
+
+        if (_engine is null)
+        {
+            return;
+        }
 
         foreach (OutputChannel channel in _engine.Channels)
         {
