@@ -2139,6 +2139,17 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    /// <summary>The localisation key for a fault layer.</summary>
+    private static string VerdictKey(MultiBT.Core.Sync.FaultLayer layer) => layer switch
+    {
+        MultiBT.Core.Sync.FaultLayer.Endpoint => "Diagnostics.Verdict.Endpoint",
+        MultiBT.Core.Sync.FaultLayer.SharedSource => "Diagnostics.Verdict.SharedSource",
+        MultiBT.Core.Sync.FaultLayer.SingleDevice => "Diagnostics.Verdict.SingleDevice",
+        MultiBT.Core.Sync.FaultLayer.ClockMismatch => "Diagnostics.Verdict.ClockMismatch",
+        MultiBT.Core.Sync.FaultLayer.None => "Diagnostics.Verdict.None",
+        _ => "Diagnostics.Verdict.Delivered",
+    };
+
     /// <summary>
     /// The "running" line for a device, composed from the localisation table.
     /// </summary>
@@ -2194,7 +2205,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         // trough depth (which NAudio would otherwise hide completely), and the capture→device
         // format pair — the last being what distinguishes "this device is silent because it is
         // disconnected" from "silent because the rate conversion is broken".
-        DiagnosticsSummary = string.Join("   |   ", all.Select(SummariseChannel));
+        // The verdict comes first, because it answers the question all of those numbers are for: which layer is at
+        // fault. It is computed from the same diagnostics, so it cannot drift out of step with what it describes.
+        DiagnosticsSummary = Localizer.Instance[VerdictKey(MultiBT.Core.Sync.DiagnosticsVerdict.Classify(all))]
+            + "   |   "
+            + string.Join("   |   ", all.Select(SummariseChannel));
 
         foreach (ChannelDiagnostics diagnostics in all)
         {
