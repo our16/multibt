@@ -93,6 +93,16 @@ public sealed class OutputChannel : IAsyncDisposable
     private readonly Stopwatch _uptime = new();
 
     private long _resyncCount;
+
+    /// <summary>
+    /// Whether the fill has been settled to the target once, at the end of warm-up.
+    /// </summary>
+    /// <remarks>
+    /// Once only, deliberately. Re-settling on every tick would drop audio continuously and would turn a stable
+    /// surplus into an audible stutter; the point is to correct where the first pull left the ring, not to keep
+    /// correcting.
+    /// </remarks>
+    private bool _settledAfterWarmUp;
     private int _engineLatencyMs;
     private double _lastFillMinMs;
     private double _lastFillMaxMs;
@@ -457,6 +467,26 @@ public sealed class OutputChannel : IAsyncDisposable
             return;
         }
 
+        if (!_settledAfterWarmUp)
+        {
+            _settledAfterWarmUp = true;
+
+            // SETTLE ONCE, to the target, at the end of warm-up.
+            //
+            // The ring is pre-filled to survive the player's first WASAPI pull, and that pull is approximately one
+            // engine latency long but not exactly, so where the fill LANDS is not knowable in advance. Measured on
+            // real hardware: one Bluetooth device landed at 124.5 ms against a 105 ms target while the others landed
+            // between 95 and 105.
+            //
+            // Nothing else brings a surplus down. The controller's authority is +-400 ppm, so removing 20 ms of
+            // excess would take the better part of a minute of saturation -- and it cannot remove it at all, because
+            // a proportional controller settles at an error proportional to the mismatch rather than at zero. The
+            // trim below only fires above the resync line at 135 ms, which 124.5 does not reach. So each device
+            // keeps whatever surplus its first pull happened to leave, and the devices end up tens of milliseconds
+            // apart from EACH OTHER, which is the one thing this whole mechanism exists to prevent.
+            fillSeconds = TrimToTarget(fillSeconds);
+        }
+
         if (_drift.ShouldResync(fillSeconds))
         {
             // TRIM THE EXCESS down to the target — do NOT empty the buffer.
@@ -470,15 +500,7 @@ public sealed class OutputChannel : IAsyncDisposable
             //
             // Dropping only the surplus keeps the channel alive and, as a bonus, converges to the
             // target immediately instead of walking there at 0.02 %.
-            double excessSeconds = fillSeconds - _drift.TargetBacklogSeconds;
-
-            if (excessSeconds > 0)
-            {
-                int droppedBytes = TrimExcess(excessSeconds);
-                fillSeconds -= droppedBytes / (double)_ring.WaveFormat.AverageBytesPerSecond;
-            }
-
-            Interlocked.Increment(ref _resyncCount);
+            fillSeconds = TrimToTarget(fillSeconds);
 
             // Deliberately NO _drift.Reset() / warm-up restart here: the ring was not emptied, so
             // the controller's state is still valid. Observe() below simply sees the trimmed fill.
@@ -486,6 +508,38 @@ public sealed class OutputChannel : IAsyncDisposable
 
         _drift.Observe(fillSeconds);
         _resampler.SetCorrection(_drift.Tick());
+    }
+
+    /// <summary>
+    /// Drops whatever the ring holds beyond the target depth, and reports the fill afterwards.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One place for the only two callers, because they are the same action: drop buffered audio until the target
+    /// is reached. The difference is only in WHEN — once at the end of warm-up, and again whenever the backlog runs
+    /// away past the resync line.
+    /// </para>
+    /// <para>
+    /// Counted as a resync either way: dropping audio the device was about to play is a discontinuity, and a
+    /// counter that hid half of them would be worse than no counter.
+    /// </para>
+    /// </remarks>
+    /// <param name="fillSeconds">The current fill, in seconds.</param>
+    /// <returns>The fill after trimming, in seconds.</returns>
+    private double TrimToTarget(double fillSeconds)
+    {
+        double excessSeconds = fillSeconds - _drift.TargetBacklogSeconds;
+
+        if (excessSeconds <= 0)
+        {
+            return fillSeconds;
+        }
+
+        int droppedBytes = TrimExcess(excessSeconds);
+
+        Interlocked.Increment(ref _resyncCount);
+
+        return fillSeconds - (droppedBytes / (double)_ring.WaveFormat.AverageBytesPerSecond);
     }
 
     /// <summary>
