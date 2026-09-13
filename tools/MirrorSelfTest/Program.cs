@@ -122,6 +122,7 @@ internal static class Program
 
         int runSeconds = DefaultRunSeconds;
         string? sourceSelector = null;
+        bool noCorrection = false;
         var positionSpecs = new List<(string Match, MultiBT.Core.Sync.DevicePosition Position, string Origin)>();
 
         for (int i = 0; i < args.Length; i++)
@@ -133,6 +134,13 @@ internal static class Program
             else if (args[i] is "--source" && i + 1 < args.Length)
             {
                 sourceSelector = args[++i];
+            }
+            else if (args[i] is "--no-correction")
+            {
+                // Measures the chain's RAW rate balance: with the drift controller held off, each ring's fill climbs
+                // or falls at the real rate error, in ppm. That is the number that distinguishes a genuine clock
+                // difference between devices from a bug in our own rate handling -- a pinned correction cannot.
+                noCorrection = true;
             }
             else if (args[i] is "--position" && i + 1 < args.Length)
             {
@@ -361,6 +369,11 @@ internal static class Program
                     RampProbeGain);
 
                 channel.Start();
+
+                if (noCorrection)
+                {
+                    channel.DriftCorrectionEnabled = false;
+                }
 
                 // Sampled immediately: the ramp must begin from silence.
                 double gainAtStart = channel.CurrentGain;

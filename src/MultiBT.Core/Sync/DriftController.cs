@@ -127,6 +127,17 @@ public sealed class DriftController
     }
 
     /// <summary>
+    /// Whether the controller corrects at all.
+    /// </summary>
+    /// <remarks>
+    /// On everywhere except the self-test, which turns it off to measure the chain's RAW rate balance: with no
+    /// correction applied, a ring's fill drifts at the true rate error, and that number is what tells a real clock
+    /// difference apart from a bug in our own rate handling. A correction pinned at its ceiling cannot make that
+    /// distinction, because a proportional controller saturates for any error above a fraction of a millisecond.
+    /// </remarks>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
     /// Runs one control tick and returns the new correction ratio to apply to the resampler.
     /// Call this at a FIXED <see cref="EngineTunables.ControlTickHz"/> — never from the render
     /// callback, which reintroduces per-callback ratio jitter.
@@ -134,6 +145,11 @@ public sealed class DriftController
     /// <returns>The dimensionless correction to pass to the per-channel resampler.</returns>
     public double Tick()
     {
+        if (!Enabled)
+        {
+            return 0.0;
+        }
+
         double trough = _windowMinSeconds;
         _windowMinSeconds = double.PositiveInfinity;   // reset the window
 

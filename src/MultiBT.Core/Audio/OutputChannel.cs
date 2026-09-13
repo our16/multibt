@@ -103,6 +103,15 @@ public sealed class OutputChannel : IAsyncDisposable
     /// correcting.
     /// </remarks>
     private bool _settledAfterWarmUp;
+
+    /// <summary>
+    /// Whether the drift correction runs. Off only in the self-test, to measure the chain's raw rate balance.
+    /// </summary>
+    public bool DriftCorrectionEnabled
+    {
+        get => _drift.Enabled;
+        set => _drift.Enabled = value;
+    }
     private int _engineLatencyMs;
     private double _lastFillMinMs;
     private double _lastFillMaxMs;

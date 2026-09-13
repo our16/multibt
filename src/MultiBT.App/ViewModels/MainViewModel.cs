@@ -2146,6 +2146,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         MultiBT.Core.Sync.FaultLayer.SharedSource => "Diagnostics.Verdict.SharedSource",
         MultiBT.Core.Sync.FaultLayer.SingleDevice => "Diagnostics.Verdict.SingleDevice",
         MultiBT.Core.Sync.FaultLayer.ClockMismatch => "Diagnostics.Verdict.ClockMismatch",
+        MultiBT.Core.Sync.FaultLayer.Backlog => "Diagnostics.Verdict.Backlog",
         MultiBT.Core.Sync.FaultLayer.None => "Diagnostics.Verdict.None",
         _ => "Diagnostics.Verdict.Delivered",
     };

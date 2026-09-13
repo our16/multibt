@@ -31,6 +31,13 @@ public enum FaultLayer
     SingleDevice,
 
     /// <summary>
+    /// The ring is holding more than the target and keeps being cut back, so audio is being dropped to keep up.
+    /// This is the audible one: every cut is a discontinuity, and devices sitting at different depths arrive at
+    /// different times.
+    /// </summary>
+    Backlog,
+
+    /// <summary>
     /// The drift correction is pinned at its ceiling, so the device's clock differs by more than the authority
     /// deliberately granted to the controller.
     /// </summary>
@@ -51,9 +58,14 @@ public enum FaultLayer
 /// </para>
 /// <para>
 /// What it canNOT see, and must not pretend to: the radio. There is no public API for Bluetooth link quality, so
-/// every radio symptom reaches this code only as its consequences -- a device that reports a rising latency, or a
-/// buffer that is not being drained. When those are absent and the user still hears choppiness, the honest answer
-/// is <see cref="FaultLayer.Delivered"/> rather than a guess.
+/// every radio symptom reaches this code only as its consequences. When those are absent and the user still hears
+/// choppiness, the honest answer is <see cref="FaultLayer.Delivered"/> rather than a guess.
+/// </para>
+/// <para>
+/// The backlog rule exists because the first version of this did not have one, and reported a pinned correction as
+/// a clock mismatch on a machine whose real problem was rings holding 115 to 145 ms against a 105 ms target and
+/// being trimmed over and over. A pinned proportional correction only means the error exceeds 0.8 ms -- which is
+/// true whenever the fill is off target at all -- so it is the WEAKEST evidence here, not the strongest.
 /// </para>
 /// </remarks>
 public static class DiagnosticsVerdict
@@ -79,6 +91,25 @@ public static class DiagnosticsVerdict
 
     /// <summary>How close to the ceiling the correction must be to count as pinned.</summary>
     public const double PinnedCorrectionFraction = 0.98;
+
+    /// <summary>
+    /// How far above the target the AVERAGE fill may sit before the channel counts as backed up.
+    /// </summary>
+    /// <remarks>
+    /// A healthy channel holds the target to within about a millisecond, so this is an order of magnitude above
+    /// normal wander and well below the tens of milliseconds a genuinely backed-up ring shows.
+    /// </remarks>
+    public const double BacklogMeanAlarmMs = 15.0;
+
+    /// <summary>
+    /// How much the fill may swing within one window before the channel counts as backed up.
+    /// </summary>
+    /// <remarks>
+    /// This is the signature of the trim-and-refill cycle: the ring fills past the resync line, gets cut back to
+    /// the target, and fills again. A healthy channel's fill does not move by whole milliseconds in a window, so a
+    /// swing of this size means audio is being dropped repeatedly -- which is heard as choppiness.
+    /// </remarks>
+    public const double BacklogSwingAlarmMs = 8.0;
 
     /// <summary>
     /// Classifies one set of channels.
@@ -136,6 +167,16 @@ public static class DiagnosticsVerdict
             return FaultLayer.SingleDevice;
         }
 
+        // Above the starvation checks because a ring being cut back is a fault in THIS program's own chain, and
+        // that is the more actionable answer of the two.
+        foreach (ChannelDiagnostics channel in channels)
+        {
+            if (IsBackedUp(channel))
+            {
+                return FaultLayer.Backlog;
+            }
+        }
+
         foreach (ChannelDiagnostics channel in channels)
         {
             if (Math.Abs(channel.CorrectionPpm) >= EngineTunables.MaxCorrection * 1e6 * PinnedCorrectionFraction)
@@ -153,5 +194,25 @@ public static class DiagnosticsVerdict
         ArgumentNullException.ThrowIfNull(channel);
 
         return channel.FillMinMs < channel.TargetBacklogMs * StarvingFillFraction;
+    }
+
+    /// <summary>
+    /// Whether this channel is holding more than its target, steadily or as a fill-and-trim cycle.
+    /// </summary>
+    /// <remarks>
+    /// Either symptom counts on its own. A ring that sits above the target has added latency the controller cannot
+    /// remove, since its authority is hundredths of a percent; a ring whose fill swings by milliseconds is being
+    /// trimmed, and every trim drops audio.
+    /// </remarks>
+    public static bool IsBackedUp(ChannelDiagnostics channel)
+    {
+        ArgumentNullException.ThrowIfNull(channel);
+
+        if (channel.FillMeanMs > channel.TargetBacklogMs + BacklogMeanAlarmMs)
+        {
+            return true;
+        }
+
+        return channel.FillMaxMs - channel.FillMinMs > BacklogSwingAlarmMs;
     }
 }
