@@ -26,22 +26,17 @@ public sealed class SpatialPickerView : FrameworkElement
     /// <summary>How far the view turns per pixel dragged.</summary>
     private const double DegreesPerPixel = 0.4;
 
-    /// <summary>
-    /// How close and how far the camera may be pulled.
-    /// </summary>
+    /// <summary>How far the view may be zoomed out and in with the wheel.</summary>
     /// <remarks>
-    /// The near limit is not taste: the reachable directions form a cap of acos(1 / distance), so a camera
-    /// pulled closer than this leaves too little of the sphere clickable to be useful.
+    /// The near limit is not taste: the directions a click can reach form a cap of acos(1 / distance), so a view
+    /// zoomed in far enough leaves too little of the sphere clickable to be useful.
     /// </remarks>
-    private const double MinimumCameraDistance = 1.7;
+    private const double MinimumZoom = 0.55;
 
-    /// <inheritdoc cref="MinimumCameraDistance" />
-    private const double MaximumCameraDistance = 9.0;
+    /// <inheritdoc cref="MinimumZoom" />
+    private const double MaximumZoom = 2.6;
 
-    private static readonly Brush SphereFill = Frozen(new SolidColorBrush(Color.FromArgb(0x8C, 0xF8, 0xFA, 0xFC)));
-    private static readonly Brush FloorFill = Frozen(new SolidColorBrush(Color.FromRgb(0xEF, 0xF6, 0xFF)));
-    private static readonly Brush SofaFill = Frozen(new SolidColorBrush(Color.FromRgb(0xE2, 0xE8, 0xF0)));
-    private static readonly Brush LabelBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x64, 0x74, 0x8B)));
+    private static readonly Brush SphereFill = Frozen(new SolidColorBrush(Color.FromArgb(0x26, 0xDC, 0xE7, 0xF5)));
     private static readonly Brush Accent = Frozen(new SolidColorBrush(Color.FromRgb(0x25, 0x63, 0xEB)));
     private static readonly Brush ListenerFill = Frozen(new SolidColorBrush(Color.FromRgb(0x11, 0x18, 0x27)));
     private static readonly Brush VisibleDot = Frozen(new SolidColorBrush(Color.FromRgb(0x94, 0xA3, 0xB8)));
@@ -227,103 +222,21 @@ public sealed class SpatialPickerView : FrameworkElement
 
         drawingContext.PushTransform(new TranslateTransform(offsetX, offsetY));
 
-        DrawFloor(drawingContext);
+        // The bubble first and faintly, so the room reads as being inside it rather than behind it. Hidden edges
+        // are drawn too: the fill is almost nothing, so dashing the back half away would cost more code than it
+        // communicates.
         drawingContext.DrawGeometry(SphereFill, OutlinePen, Close(SpatialProjection.Silhouette(View)));
-        DrawFurniture(drawingContext);
-
-        // A wireframe globe, hidden edges included: the fill is nearly white, so a dashed-away back half would
-        // cost more code than it communicates.
         DrawRing(drawingContext, 0.0, RingPen);
         DrawRing(drawingContext, 45.0, RingPen);
         DrawRing(drawingContext, -45.0, RingPen);
-
         DrawAxis(drawingContext, size);
+
+        SpatialRoom.Draw(drawingContext, View, size, FrontText, BackText, ListenerText);
+
         DrawPresetDots(drawingContext, size);
-        DrawOrientation(drawingContext, size);
         DrawMarker(drawingContext, size);
 
         drawingContext.Pop();
-    }
-
-    /// <summary>
-    /// The floor the listener stands on, as a disc through the origin.
-    /// </summary>
-    /// <remarks>
-    /// Without a horizontal plane the rings are a bubble in space, and "the speaker is behind me" cannot be
-    /// read off it. The disc is schematic -- its radius is the framed radius, not a room measurement.
-    /// </remarks>
-    private void DrawFloor(DrawingContext dc)
-    {
-        DevicePosition[] rim = SpatialProjection.ElevationRing(0.0, 64);
-        var ring = new DevicePosition[rim.Length];
-
-        for (int i = 0; i < rim.Length; i++)
-        {
-            ring[i] = rim[i].AtDistance(View.FrameRadius);
-        }
-
-        dc.DrawGeometry(FloorFill, OutlinePen, Close(ring));
-    }
-
-    /// <summary>
-    /// The room the directions are relative to: a sofa behind the listener.
-    /// </summary>
-    /// <remarks>
-    /// Drawn inside the sphere's footprint rather than to scale, because the sphere is a unit of DIRECTIONS and
-    /// a sofa at its true size would sit outside the frame at every camera distance. What matters is which way
-    /// it is on, not how big it is.
-    /// </remarks>
-    private void DrawFurniture(DrawingContext dc)
-    {
-        // Seat: a quad on the floor behind the listener, plus a backrest rising from its far edge.
-        DevicePosition[] seat =
-        [
-            new(-0.62, -0.66, 0.0),
-            new(0.62, -0.66, 0.0),
-            new(0.62, -0.98, 0.0),
-            new(-0.62, -0.98, 0.0),
-        ];
-
-        dc.DrawGeometry(SofaFill, DotPen, Close(seat));
-
-        DevicePosition[] back =
-        [
-            new(-0.62, -0.98, 0.0),
-            new(0.62, -0.98, 0.0),
-            new(0.62, -0.98, 0.34),
-            new(-0.62, -0.98, 0.34),
-        ];
-
-        dc.DrawGeometry(SofaFill, DotPen, Close(back));
-    }
-
-    /// <summary>Labels the two directions that cannot be guessed: ahead and behind.</summary>
-    private void DrawOrientation(DrawingContext dc, double size)
-    {
-        (double frontX, double frontY, _) = SpatialProjection.ProjectPoint(new DevicePosition(0.0, 0.86, 0.0), View, size);
-        DrawLabel(dc, FrontText, frontX, frontY);
-
-        (double backX, double backY, _) = SpatialProjection.ProjectPoint(new DevicePosition(0.0, -1.12, 0.0), View, size);
-        DrawLabel(dc, BackText, backX, backY);
-    }
-
-    private void DrawLabel(DrawingContext dc, string text, double x, double y)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return;
-        }
-
-        var formatted = new FormattedText(
-            text,
-            System.Globalization.CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight,
-            new Typeface("Segoe UI"),
-            11.0,
-            LabelBrush,
-            VisualTreeHelper.GetDpi(this).PixelsPerDip);
-
-        dc.DrawText(formatted, new Point(x - (formatted.Width / 2.0), y - (formatted.Height / 2.0)));
     }
 
     /// <inheritdoc />
@@ -419,12 +332,12 @@ public sealed class SpatialPickerView : FrameworkElement
 
         base.OnMouseWheel(e);
 
+        // Zoom rather than dolly. Moving the camera only changes the perspective, because the framing is defined
+        // by the sphere's silhouette: pulling back makes the view flatter, never smaller, so a wheel that moved
+        // the camera would answer "make it bigger" with nothing at all.
         double steps = e.Delta / 120.0;
 
-        _camera = _camera with
-        {
-            Distance = Math.Clamp(_camera.Distance - (steps * 0.4), MinimumCameraDistance, MaximumCameraDistance),
-        };
+        _camera = _camera with { Zoom = Math.Clamp(_camera.Zoom + (steps * 0.12), MinimumZoom, MaximumZoom) };
 
         InvalidateVisual();
         e.Handled = true;
@@ -614,14 +527,6 @@ public sealed class SpatialPickerView : FrameworkElement
         var markerPoint = new Point(x, y);
 
         dc.DrawLine(AccentPen, centre, markerPoint);
-
-        // The listener is the origin everything else is measured from, so it gets its own mark: a dark dot in
-        // a white ring, which also keeps the centre readable under the marker's own line.
-        dc.DrawEllipse(Halo, null, centre, 6.0, 6.0);
-        dc.DrawEllipse(ListenerFill, null, centre, 3.5, 3.5);
-
-        // Naming the dot is what turns it from a mark into a viewpoint.
-        DrawLabel(dc, ListenerText, centre.X, centre.Y + 14.0);
 
         double markerRadius = solid ? 6.0 : 5.0;
 

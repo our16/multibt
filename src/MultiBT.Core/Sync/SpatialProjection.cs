@@ -13,6 +13,7 @@ namespace MultiBT.Core.Sync;
 /// The radius the view is framed around, in sphere radii. 1 keeps the direction sphere filling the viewport;
 /// a device placed further out needs a larger frame or its marker is drawn off the edge.
 /// </param>
+/// <param name="Zoom">Magnification on top of the framing. 1 is the default view; the wheel changes this.</param>
 /// <remarks>
 /// Mutable state of the VIEW, not of any device, which is why it is not part of a device's settings: two
 /// devices share one camera, and turning it to place one device must not move the other.
@@ -21,7 +22,8 @@ public readonly record struct SpatialViewCamera(
     double AzimuthDegrees,
     double ElevationDegrees,
     double Distance,
-    double FrameRadius = 1.0)
+    double FrameRadius = 1.0,
+    double Zoom = 1.0)
 {
     /// <summary>In front of the listener and above, so the floor and the horizon are both visible.</summary>
     /// <remarks>
@@ -53,6 +55,7 @@ public readonly record struct SpatialViewCamera(
             // The camera must stay outside what it is framing: at or inside the framed radius the silhouette has
             // no solution and the projection collapses to a point.
             Distance = Math.Max(Math.Max(1.35, Distance), frame * 1.2),
+            Zoom = Math.Clamp(Zoom, 0.35, 3.0),
         };
     }
 }
@@ -394,7 +397,21 @@ public static class SpatialProjection
 
         double separation = Math.Max((safe.Distance * safe.Distance) - (framed * framed), 1e-6);
 
-        return (size * FillFraction / 2.0) * Math.Sqrt(separation) / framed;
+        return (size * FillFraction / 2.0) * Math.Sqrt(separation) / framed * safe.Zoom;
+    }
+
+    /// <summary>
+    /// Where the camera is, in sphere radii.
+    /// </summary>
+    /// <remarks>
+    /// Public because drawing a solid room needs it: which faces of a box point away from the camera, and which
+    /// box is in front of which, are both decided against this point and cannot be guessed from the projection.
+    /// </remarks>
+    public static DevicePosition CameraPosition(SpatialViewCamera camera)
+    {
+        (double x, double y, double z) = Eye(camera);
+
+        return new DevicePosition(x, y, z);
     }
 
     /// <summary>The unit direction of a vector, as a position.</summary>

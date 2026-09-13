@@ -312,6 +312,28 @@ public sealed class SpatialProjectionTests
         Assert.True(Math.Abs(x - sx) > 0.5 || Math.Abs(y - sy) > 0.5);
     }
 
+    [Fact]
+    public void ZoomMagnifiesTheViewWithoutMovingIt()
+    {
+        var camera = SpatialViewCamera.Default;
+        var zoomed = camera with { Zoom = 2.0 };
+        var direction = new DevicePosition(0.6, 0.8, 0.0);
+
+        (double x, double y, _) = SpatialProjection.Project(direction, camera, Size);
+        (double zx, double zy, _) = SpatialProjection.Project(direction, zoomed, Size);
+
+        double centre = Size / 2.0;
+
+        // Twice the zoom is twice the distance from the centre of the view. This is the whole of what the wheel
+        // promises: moving the camera instead would not change the size at all, because the framing is defined
+        // by the sphere's silhouette and follows the camera.
+        Assert.Equal((x - centre) * 2.0, zx - centre, 0.5);
+        Assert.Equal((y - centre) * 2.0, zy - centre, 0.5);
+
+        // And a click on the magnified view still means the same direction.
+        AssertClose(direction, SpatialProjection.Unproject(zx, zy, zoomed, Size), "round trip while zoomed");
+    }
+
     /// <summary>The camera's own position, as the tests compute it independently.</summary>
     private static (double X, double Y, double Z) Eye(SpatialViewCamera camera)
     {
