@@ -77,17 +77,6 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private IAudioInputBackend? _pendingBackend;
 
     /// <summary>
-    /// The Windows default output before the mirror routed it into a cable, or null when it did not.
-    /// </summary>
-    /// <remarks>
-    /// Held only while mirroring, so stopping can hand the machine back exactly as it was found.
-    /// </remarks>
-    private string? _defaultOutputBeforeMirror;
-
-    /// <summary>The cable this app pointed the Windows default output at, or null when it did not.</summary>
-    private string? _routedCableEndpointId;
-
-    /// <summary>
     /// True while an input change is rebuilding the mirror, so the stop half does not undo the routing
     /// only for the start half to redo it a moment later.
     /// </summary>
@@ -1339,13 +1328,27 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return null;
         }
 
+        // Recorded and SAVED before the switch. A crash in between would otherwise leave the machine rendering
+        // into a cable with nothing on disk to say where it came from, which is the whole failure this record
+        // exists to undo. Recording something that turns out not to be needed is harmless: the restore checks
+        // that the default is still this cable before it does anything at all.
+        if (current is not null)
+        {
+            _settings.Engine.DefaultOutputBeforeMirror = current;
+            _settings.Engine.RoutedCableEndpointId = source.ID;
+            _store.Save(_settings);
+        }
+
         if (!DefaultEndpointSwitcher.TrySetDefault(source.ID, out string? error))
         {
+            // The switch did not happen, so the record would be a lie about a change that was never made.
+            _settings.Engine.DefaultOutputBeforeMirror = null;
+            _settings.Engine.RoutedCableEndpointId = null;
+            _store.Save(_settings);
+
             return Localizer.Instance.Format("Sink.SwitchFailed", error);
         }
 
-        _defaultOutputBeforeMirror = current;
-        _routedCableEndpointId = source.ID;
         _defaultRenderEndpointId = source.ID;
         return null;
     }
@@ -1358,27 +1361,75 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     /// user has since chosen a different default, that choice stands — undoing it would be the app deciding
     /// it knows better about the machine's audio routing.
     /// </remarks>
-    private void RestoreDefaultOutput()
+    /// <returns>Whether the default was actually put back.</returns>
+    private bool RestoreDefaultOutput()
     {
-        string? previous = _defaultOutputBeforeMirror;
-        string? cable = _routedCableEndpointId;
+        string? previous = _settings.Engine.DefaultOutputBeforeMirror;
+        string? cable = _settings.Engine.RoutedCableEndpointId;
 
-        _defaultOutputBeforeMirror = null;
-        _routedCableEndpointId = null;
+        if (previous is null && cable is null)
+        {
+            return false;
+        }
+
+        // Cleared and SAVED first, so that a failure partway through this method cannot leave a record that the
+        // next launch would act on again.
+        _settings.Engine.DefaultOutputBeforeMirror = null;
+        _settings.Engine.RoutedCableEndpointId = null;
+        _store.Save(_settings);
 
         if (previous is null || cable is null)
         {
-            return;
+            return false;
         }
 
         if (!string.Equals(CurrentDefaultRenderEndpointId(), cable, StringComparison.OrdinalIgnoreCase))
         {
+            return false;
+        }
+
+        if (!DefaultEndpointSwitcher.TrySetDefault(previous, out _))
+        {
+            return false;
+        }
+
+        _defaultRenderEndpointId = previous;
+        return true;
+    }
+
+    /// <summary>
+    /// Undoes the routing, for the exit paths that are not the user pressing stop.
+    /// </summary>
+    /// <remarks>
+    /// A fatal exception, a logoff, a shutdown and the process ending all have to undo it, or the machine is left
+    /// with no audible output at all and no obvious reason. Safe to call more than once: the record is consumed
+    /// the first time.
+    /// </remarks>
+    /// <returns>Whether the default was actually put back.</returns>
+    public bool RestoreDefaultOutputIfRouted() => RestoreDefaultOutput();
+
+    /// <summary>
+    /// Undoes routing left behind by a run that did not exit cleanly.
+    /// </summary>
+    /// <remarks>
+    /// The record is written before the routing is applied and consumed when it is undone, so finding one at
+    /// startup means exactly one thing: the previous run never got to undo it. This is the only path that can
+    /// undo a forced kill or a power cut, because in those cases none of this code ran at all.
+    /// </remarks>
+    public void RecoverLeftoverRouting()
+    {
+        string? target = _settings.Engine.DefaultOutputBeforeMirror;
+
+        if (_settings.Engine.RoutedCableEndpointId is null)
+        {
             return;
         }
 
-        if (DefaultEndpointSwitcher.TrySetDefault(previous, out _))
+        if (RestoreDefaultOutput())
         {
-            _defaultRenderEndpointId = previous;
+            StatusText = Localizer.Instance.Format(
+                "Status.DefaultRestoredAfterCrash",
+                target ?? string.Empty);
         }
     }
 

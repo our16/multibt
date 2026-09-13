@@ -51,6 +51,34 @@ public sealed class EngineSettings
     /// <summary>Render endpoint to mirror, or <c>null</c> to follow the Windows default render device.</summary>
     public string? SourceDeviceId { get; set; }
 
+    /// <summary>
+    /// The Windows default render endpoint that was in place before this app routed audio into a cable.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Written to disk BEFORE the routing is applied, because the in-memory record this replaces did not survive
+    /// the one case that matters: a crash, a forced kill or a power cut leaves Windows rendering into a cable
+    /// nobody can hear, and the user's next move is to wonder why the machine has gone silent. With the record
+    /// on disk, the next launch can put it back -- and that is the ONLY path that can, because no code of ours
+    /// runs at all in those cases.
+    /// </para>
+    /// <para>
+    /// Cleared the moment the routing is undone, whether that is the user stopping the mirror or the next launch
+    /// finding a record the last one left behind.
+    /// </para>
+    /// </remarks>
+    public string? DefaultOutputBeforeMirror { get; set; }
+
+    /// <summary>
+    /// The cable this app set as the default render endpoint, or <c>null</c> when it has not set one.
+    /// </summary>
+    /// <remarks>
+    /// Kept alongside the endpoint to go back to, because the restore is deliberately conservative: it undoes the
+    /// change only while the default is STILL this cable. If the user has chosen something else since, that
+    /// choice stands -- undoing it would be this app deciding it knows better about their machine.
+    /// </remarks>
+    public string? RoutedCableEndpointId { get; set; }
+
 
     /// <summary>
     /// The virtual cable Windows should render into, or <c>null</c> when none is configured.

@@ -38,6 +38,13 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
+        // Exit paths that are not the user pressing stop. Each of them has to undo the audio routing, or the
+        // machine is left rendering into a cable nobody can hear -- silence with no cause the user could guess.
+        // The one case none of this covers is a forced kill, which is why the routing is recorded on disk
+        // before it is applied and put back by the next launch (see MainViewModel.RecoverLeftoverRouting).
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => RestoreRoutingQuietly();
+        SessionEnding += (_, _) => RestoreRoutingQuietly();
+
         _singleInstance = new SingleInstance(out bool isFirstInstance);
 
         if (!isFirstInstance)
@@ -53,6 +60,10 @@ public partial class App : Application
         _viewModel = new MainViewModel();
         _window = new MainWindow(_viewModel);
         _tray = new TrayHost();
+
+        // A record left on disk means the previous run never got to undo its routing, which can only happen when
+        // it did not exit cleanly. Put the machine's audio back before anything else touches it.
+        _viewModel.RecoverLeftoverRouting();
 
         WireTray(_tray, _viewModel);
 
@@ -212,6 +223,26 @@ public partial class App : Application
         Shutdown();
     }
 
+    /// <summary>
+    /// Undoes the audio routing while the process is on its way out.
+    /// </summary>
+    /// <remarks>
+    /// Swallows everything: this runs during a shutdown, from an event that cannot report a failure usefully, and
+    /// the alternative to a quiet failure is an exception thrown while the runtime is tearing down. The record on
+    /// disk is what covers the cases this cannot.
+    /// </remarks>
+    private void RestoreRoutingQuietly()
+    {
+        try
+        {
+            _viewModel?.RestoreDefaultOutputIfRouted();
+        }
+        catch (Exception)
+        {
+            // Best effort. The next launch finds the record and finishes the job.
+        }
+    }
+
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         MessageBox.Show(
@@ -220,16 +251,28 @@ public partial class App : Application
             MessageBoxButton.OK,
             MessageBoxImage.Error);
 
-        // Keep running: a single failed UI interaction should not take down an active mirror.
+        // Keep running: a single failed UI interaction should not take down an active mirror -- and so the audio
+        // routing is deliberately NOT undone here. The mirror may well still be running.
         e.Handled = true;
     }
 
-    private static void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs e) =>
+    /// <summary>
+    /// Reports a fatal exception, having first handed the machine's audio back.
+    /// </summary>
+    /// <remarks>
+    /// This one is not survivable, so the routing has to be undone before the process ends: a fatal error that
+    /// leaves Windows rendering into a silent cable is a second failure on top of the first.
+    /// </remarks>
+    private void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        RestoreRoutingQuietly();
+
         MessageBox.Show(
             $"{Localizer.Instance["Dialog.FatalError"]}\n\n{e.ExceptionObject}",
             Localizer.Instance["Dialog.Error"],
             MessageBoxButton.OK,
             MessageBoxImage.Error);
+    }
 
     private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
     {
