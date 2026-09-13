@@ -15,7 +15,7 @@
       Without this a released v0.0.1 tag would point at an executable whose properties say 1.0.0.0, and
       "which build is this?" becomes unanswerable from the file itself.
     -->
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <Product>MultiBT</Product>
     <Description>多设备音频同步输出 — 把一份系统声音同时送到多个音箱，并让它们保持同步。</Description>
 
