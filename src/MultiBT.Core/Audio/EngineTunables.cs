@@ -37,14 +37,28 @@ public static class EngineTunables
     /// AudioHQ-validated (0.2.1/0.2.3).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// This is also the line the PRE-FILL must stay below, and it is deliberately the looser of the two
     /// numbers: the fill lands above <c>f*</c> on purpose (see <see cref="PrefillSlackMs"/>) and a channel
-    /// that lands within a millisecond of this line spends its life crossing it. Measured with
-    /// tools/MirrorSelfTest on real hardware: one channel parked at 124.8 ms against a 125 ms line resynced
-    /// 56 times in a minute while a channel at 102.6 ms resynced none — the audible symptom being that one
-    /// device stutters.
+    /// that lands within a millisecond of this line spends its life crossing it.
+    /// </para>
+    /// <para>
+    /// Raised from 25 to 80 ms after a controlled comparison on real hardware. Two Bluetooth outputs held their
+    /// fill flat (0 to 0.1 ms of swing) with one resync each: the warm-up settle and nothing after. Adding a third
+    /// device with a weak link -- measured by the user, and matching its own report that it alone is fine --
+    /// pushed ALL THREE channels into a 10 ms swing with 9 to 11 resyncs, the other two included. A Bluetooth link
+    /// cannot change how full our ring is except by making its endpoint read more slowly, so what the numbers show
+    /// is the transport starving the endpoints, our ring backing up, and the trim below dropping audio to bring it
+    /// back. Every trim is a gap, and that is the choppiness being reported.
+    /// </para>
+    /// <para>
+    /// A wider margin does NOT reduce how much audio has to be dropped -- the surplus is set by the transport, not
+    /// by this number -- it changes how often: from a small gap every few seconds to a larger one far less often.
+    /// That is usually the better trade, and the latency it costs is invisible next to the ~200 ms a Bluetooth
+    /// output already adds. It is one constant, so it is also the knob to turn back if it sounds worse.
+    /// </para>
     /// </remarks>
-    public const double ResyncMarginMs = 35.0;
+    public const double ResyncMarginMs = 80.0;
 
     /// <summary>
     /// Latency presets offered to the user, in ms.
