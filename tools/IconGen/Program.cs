@@ -28,13 +28,51 @@ internal static class Program
     /// <summary>Sizes embedded in the .ico. 16/20/24/32 cover taskbar and DPI scaling; 256 is the shell.</summary>
     private static readonly int[] Sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256];
 
-    /// <summary>Brand gradient: indigo to cyan, top-left to bottom-right.</summary>
-    /// <summary>The application's accent colour, so the icon and the window agree.</summary>
+    /// <summary>Sizes below this carry the mark alone, without the wordmark.</summary>
+    private const int WordmarkMinimumSize = 48;
+
+    /// <summary>
+    /// The square of the master that holds just the mark: the three device circles around the audio circle.
+    /// </summary>
     /// <remarks>
-    /// Flat rather than a gradient on purpose: at 16 px a colour gradient across a 16-pixel tile is noise,
-    /// not depth. Depth comes from the single top highlight below, which is only drawn where it can be seen.
+    /// Measured from the artwork rather than guessed, by scanning it for ink: the mark spans x 224..1032 and
+    /// y 144..818 of the 1254 px master, and the wordmark does not start until y 890. A square of 800 centred on
+    /// the mark therefore holds all of it and none of the lettering.
     /// </remarks>
-    private static readonly Color Accent = Color.FromRgb(0x25, 0x63, 0xEB);
+    private static readonly Int32Rect MarkCrop = new(228, 81, 800, 800);
+
+    /// <summary>
+    /// The master artwork every size is resampled from.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A supplied picture rather than geometry, because the artwork carries lettering: lettering cannot be
+    /// re-derived at 16 px, only resampled from the same picture that was approved. It does turn to mush below
+    /// roughly 48 px, which is a property of the artwork rather than of this code -- the 16 px entry reads as a
+    /// shape and nothing more.
+    /// </para>
+    /// <para>
+    /// Loaded once, on first use, and with OnLoad so that no file handle is held while the .ico is written.
+    /// </para>
+    /// </remarks>
+    private static readonly Lazy<BitmapSource> Master = new(LoadMaster);
+
+    private static BitmapSource LoadMaster()
+    {
+        string path = Path.Combine(FindRepositoryRoot(), "assets", "icon", "source.png");
+
+        using FileStream stream = File.OpenRead(path);
+
+        var decoder = new PngBitmapDecoder(
+            stream,
+            BitmapCreateOptions.PreservePixelFormat,
+            BitmapCacheOption.OnLoad);
+
+        BitmapSource frame = decoder.Frames[0];
+        frame.Freeze();
+
+        return frame;
+    }
 
     [STAThread]
     private static int Main(string[] args)
@@ -167,133 +205,7 @@ internal static class Program
                ?? throw new InvalidOperationException("Could not locate the repository root (MultiBT.slnx).");
     }
 
-    // ---------------------------------------------------------------------------------------
-    // Drawing
-    // ---------------------------------------------------------------------------------------
 
-    /// <summary>Draws the icon at the given size into a drawing context.</summary>
-    private static void Draw(DrawingContext dc, double size)
-    {
-        // ---- tile -----------------------------------------------------------------------
-        // Inset slightly so the rounded corners are not clipped, and so the tile reads as a
-        // deliberate shape rather than a full-bleed square.
-        double inset = size * 0.045;
-        double tileSize = size - (inset * 2);
-        double cornerRadius = tileSize * 0.24;
-
-        var tile = new RectangleGeometry(
-            new Rect(inset, inset, tileSize, tileSize),
-            cornerRadius,
-            cornerRadius);
-
-        var tileBrush = new SolidColorBrush(Accent);
-        tileBrush.Freeze();
-
-        dc.DrawGeometry(tileBrush, null, tile);
-
-        // A subtle top highlight gives the tile depth without gradient noise at 16 px.
-        if (size >= 48)
-        {
-            var highlight = new LinearGradientBrush(
-                Color.FromArgb(48, 255, 255, 255),
-                Color.FromArgb(0, 255, 255, 255),
-                new Point(0, 0),
-                new Point(0, 1));
-
-            dc.DrawGeometry(
-                highlight,
-                null,
-                new RectangleGeometry(new Rect(inset, inset, tileSize, tileSize * 0.5), cornerRadius, cornerRadius));
-        }
-
-        // ---- glyph ----------------------------------------------------------------------
-        // One signal forking into three: a stem entering from the left, splitting into three bars.
-        //
-        // Small sizes get a reduced form -- three bars, no stem or fork -- for the same reason the old mark
-        // had a compact variant: the fork is the detail that disappears first when the glyph is only 16
-        // pixels wide, and half a fork reads as a smudge rather than as a shape.
-        bool compact = size < 28;
-
-        double glyphScale = size * (compact ? 0.76 : 0.62) / 100.0;
-        double glyphX = (size - (100 * glyphScale)) / 2.0;
-        double glyphY = (size - (100 * glyphScale)) / 2.0;
-
-        Point Map(double x, double y) => new(glyphX + (x * glyphScale), glyphY + (y * glyphScale));
-
-        var white = new SolidColorBrush(Colors.White);
-        white.Freeze();
-
-        // Stroke width in DEVICE pixels, not glyph units.
-        //
-        // Dividing a device-pixel target by glyphScale and handing the result to Pen is a unit error: Pen
-        // takes device pixels, so the stroke came out about eight times too thick at 32 px and the three bars
-        // merged into one blob. The ASCII preview showed it immediately.
-        // The floor is deliberately generous: at 16 px a hairline stroke antialiases away to nothing, and a
-        // bar that vanishes leaves the compact mark reading as two outputs instead of three.
-        double stroke = Math.Max(size < 28 ? 1.9 : 1.45, size * 0.075);
-
-        var pen = new Pen(white, stroke)
-        {
-            StartLineCap = PenLineCap.Round,
-            EndLineCap = PenLineCap.Round,
-            LineJoin = PenLineJoin.Round,
-        };
-
-        pen.Freeze();
-
-        if (compact)
-        {
-            // Three bars: still "many outputs", with nothing that can merge at this size.
-            foreach (double y in new[] { 24.0, 50.0, 76.0 })
-            {
-                dc.DrawGeometry(null, pen, Line(Map(17, y), Map(83, y)));
-            }
-
-            return;
-        }
-
-        // Stem, then the fork. Drawn as three separate stroked paths from one point so the join stays clean
-        // and the three branches cannot accidentally cross each other.
-        dc.DrawGeometry(null, pen, Line(Map(8, 50), Map(37, 50)));
-
-        dc.DrawGeometry(null, pen, Polyline(Map, (37, 50), (58, 24), (92, 24)));
-        dc.DrawGeometry(null, pen, Line(Map(37, 50), Map(92, 50)));
-        dc.DrawGeometry(null, pen, Polyline(Map, (37, 50), (58, 76), (92, 76)));
-    }
-
-    /// <summary>A straight segment between two mapped points.</summary>
-    private static Geometry Line(Point from, Point to)
-    {
-        var geometry = new StreamGeometry();
-
-        using (StreamGeometryContext ctx = geometry.Open())
-        {
-            ctx.BeginFigure(from, isFilled: false, isClosed: false);
-            ctx.LineTo(to, isStroked: true, isSmoothJoin: false);
-        }
-
-        geometry.Freeze();
-        return geometry;
-    }
-
-    /// <summary>A polyline through the given glyph-space points.</summary>
-    private static Geometry Polyline(Func<double, double, Point> map, params (double X, double Y)[] points)
-    {
-        var geometry = new StreamGeometry();
-
-        using (StreamGeometryContext ctx = geometry.Open())
-        {
-            ctx.BeginFigure(map(points[0].X, points[0].Y), isFilled: false, isClosed: false);
-
-            for (int i = 1; i < points.Length; i++)
-            {
-                ctx.LineTo(map(points[i].X, points[i].Y), isStroked: true, isSmoothJoin: true);
-            }
-        }
-
-        geometry.Freeze();
-        return geometry;
-    }
     /// <summary>Renders the icon to premultiplied BGRA pixels, top-down.</summary>
     private static byte[] RenderBgra(int size)
     {
@@ -319,13 +231,32 @@ internal static class Program
         return stream.ToArray();
     }
 
+    /// <summary>Renders one size by resampling the master artwork.</summary>
+    /// <remarks>
+    /// Through a visual with Fant scaling rather than with a TransformedBitmap, because the artwork is
+    /// anti-aliased throughout: a plain linear resample from 1254 px down to 16 px ignores most of the pixels in
+    /// each output pixel and leaves the curves stair-stepped.
+    /// </remarks>
     private static BitmapSource Render(int size)
     {
         var visual = new DrawingVisual();
 
+        RenderOptions.SetBitmapScalingMode(visual, BitmapScalingMode.Fant);
+
+        BitmapSource source = Master.Value;
+
+        if (size < WordmarkMinimumSize)
+        {
+            // Below this the wordmark is a row of grey mud about two pixels tall, so the small sizes carry the
+            // mark alone. Cropping rather than redrawing keeps them the same artwork as the large ones.
+            var cropped = new CroppedBitmap(source, MarkCrop);
+            cropped.Freeze();
+            source = cropped;
+        }
+
         using (DrawingContext dc = visual.RenderOpen())
         {
-            Draw(dc, size);
+            dc.DrawImage(source, new Rect(0, 0, size, size));
         }
 
         var target = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
