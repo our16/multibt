@@ -1372,7 +1372,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            device.Status = "failed";
+            device.Status = Localizer.Instance["Status.Failed"];
             StatusText = Localizer.Instance.Format("Status.CouldNotToggle", device.DisplayName, ex.Message);
         }
     }
@@ -1894,7 +1894,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         if (!_devices.TryResolveDevice(device.Endpoint.EndpointId, out MMDevice? resolved) || resolved is null)
         {
-            device.Status = "unavailable";
+            device.Status = Localizer.Instance["Status.DeviceUnavailable"];
             return;
         }
 
@@ -1944,7 +1944,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         DeviceViewModel? device = Devices.FirstOrDefault(d => d.Key == deviceKey);
         if (device is not null)
         {
-            device.Status = "stopped";
+            device.Status = Localizer.Instance["Status.DeviceStopped"];
         }
 
         // Dispose the channel and release the device. The device reference must be released AFTER

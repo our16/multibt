@@ -508,10 +508,36 @@
                                 </StackPanel>
 
                                 <!-- Fixed width: "主设备" and "设为主设备" must not shift the sliders -->
-                                <Button Grid.Column="5" Width="86" VerticalAlignment="Center"
-                                        Style="{StaticResource BaseButton}" Padding="0,4"
+                                <Button Grid.Column="5" Width="86" VerticalAlignment="Center" Padding="0,4"
                                         Click="OnPrimaryDeviceClick"
                                         ToolTip="{Binding Source={x:Static loc:Localizer.Instance}, Path=[Primary.Tip]}">
+                                    <!--
+                                      The primary device is stated in GREEN once it is the primary, and only then:
+                                      it is the device every other one is aligned against, so "which one is
+                                      primary" has to be answerable at a glance rather than by reading the label.
+                                      A style trigger beats the template's hover colour, so hover is re-stated
+                                      here as a darker green instead of the shared grey.
+                                    -->
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource BaseButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsPrimary}" Value="True">
+                                                    <Setter Property="Background" Value="#DCFCE7" />
+                                                    <Setter Property="BorderBrush" Value="#16A34A" />
+                                                    <Setter Property="Foreground" Value="#15803D" />
+                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                </DataTrigger>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding IsPrimary}" Value="True" />
+                                                        <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}"
+                                                                   Value="True" />
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Background" Value="#BBF7D0" />
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
                                     <Button.Content>
                                         <TextBlock FontSize="11" TextTrimming="CharacterEllipsis">
                                             <TextBlock.Style>

@@ -21,7 +21,7 @@ public sealed class DeviceViewModel : ObservableObject
     private bool _isEnabled;
     private double _manualOffsetMs;
     private LatencyModel.CompensationBasis _compensationBasis;
-    private string _status = "Idle";
+    private string? _status;
     private bool _isPrimary;
     private double _endpointVolume = double.NaN;
     private bool _endpointMuted;
@@ -370,9 +370,14 @@ public sealed class DeviceViewModel : ObservableObject
     }
 
     /// <summary>Runtime status shown next to the device.</summary>
+    /// <remarks>
+    /// Null means nothing has happened to this device yet, and that is displayed as the localised idle
+    /// text rather than a stored English word. Idle is the one state with no event to recompute it, so a
+    /// stored copy kept the language it was created in: a Chinese window showed "Idle" on every row.
+    /// </remarks>
     public string Status
     {
-        get => _status;
+        get => _status ?? Localizer.Instance["Status.Idle"];
         set => SetProperty(ref _status, value);
     }
 
@@ -389,6 +394,10 @@ public sealed class DeviceViewModel : ObservableObject
         OnPropertyChanged(nameof(LatencySummary));
         OnPropertyChanged(nameof(EndpointVolumeLabel));
         OnPropertyChanged(nameof(EndpointVolumePercent));
+
+        // A device that is idle has no runtime text of its own, so re-reading Status is what turns its
+        // placeholder into the new language.
+        OnPropertyChanged(nameof(Status));
     }
 
     /// <summary>Refreshes every computed property after the underlying settings change.</summary>
